@@ -2,9 +2,9 @@ CC = gcc
 
 OBJDIR = build
 TARGET = $(OBJDIR)/out
-SRCS = main.c
+SRCS = main.c parse_config.c
 OBJS = $(addprefix $(OBJDIR)/, $(SRCS:.c=.o))
-CFLAGS=$(shell pkg-config --cflags libevdev) --std=gnu11
+CFLAGS=$(shell pkg-config --cflags libevdev) -std=gnu11
 LDFLAGS=$(shell pkg-config --libs libevdev) -lm
 
 all: debug

@@ -11,15 +11,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
-#include <unistd.h>
 #include <time.h>
+#include <unistd.h>
 
 #define PHYS_NAME "usb-0000:2f:00.3-1.3/input0"
 #define EVENTPATH "/dev/input/event"
-
-const float ACCELERATION = 0.5;
-const float MAX_SPEED = 12;
-const float BREAK_FACTOR = 0.3;
 
 #define SYNTH_KEYBOARD_NAME "Synthetic Passthrough"
 #define SYNTH_MOUSE_NAME "Synthetic Mouse"
@@ -54,6 +50,8 @@ struct motion_state {
     unsigned char left;
     unsigned char right;
     unsigned char mouse_break;
+    unsigned char scroll_up;
+    unsigned char scroll_down;
 };
 
 struct v2 {
@@ -61,6 +59,9 @@ struct v2 {
     float y;
 };
 
+const float ACCELERATION = 0.5;
+const float MAX_SPEED = 12;
+const float BREAK_FACTOR = 0.3;
 struct libevdev *current_device;
 struct libevdev_uinput *synthetic_keyboard;
 struct libevdev_uinput *synthetic_mouse;
@@ -68,11 +69,14 @@ struct v2 mouse_acc = {0};
 struct motion_state motion_state = {0};
 pthread_mutex_t mouse_lock;
 pthread_t thread_id;
+volatile sig_atomic_t thread_running = 0;
 
 void exit_handler(int sig) {
     printf("\nRecieved sig %d, exiting...\n", sig);
-    pthread_cancel(thread_id);
-    pthread_join(thread_id, 0);
+    if (thread_running) {
+        pthread_cancel(thread_id);
+        pthread_join(thread_id, 0);
+    }
     pthread_mutex_destroy(&mouse_lock);
     libevdev_free(current_device);
     libevdev_uinput_destroy(synthetic_keyboard);
@@ -126,15 +130,34 @@ struct libevdev *get_device_by_phys_name(char *phys_name, int verbose) {
     return 0;
 }
 
-void debug_print_event(struct input_event *ev) {
-    printf("Event: %s %s %d\n", libevdev_event_type_get_name(ev->type),
-           libevdev_event_code_get_name(ev->type, ev->code), ev->value);
+void log_event(struct input_event *ev) {
+    // libevdev_event_value_get_name(unsigned int type, unsigned int code, int
+    // value)
+
+    printf("Type: %-7sCode: %-16sValue: %d\n",
+           libevdev_event_type_get_name(ev->type),
+           libevdev_event_code_get_name(ev->type, ev->code),
+           ev->value);
+           // libevdev_event_value_get_name(ev->type, ev->code, ev->value));
 }
 
 void *mouse_handler() {
     float max = MAX_SPEED;
-    for (;;) {
+    int cycles = 0;
+    for (;;) {pthread_mutex_unlock(&mouse_lock);
         pthread_mutex_lock(&mouse_lock);
+
+        if (memcmp(&motion_state, &(const struct motion_state) {0},
+                   sizeof(struct motion_state)) == 0) {
+            if (cycles++ == 100 * 60) {
+                thread_running = 0;
+                pthread_mutex_unlock(&mouse_lock);
+                pthread_exit(0);
+            }
+        } else {
+            cycles = 0;
+        }
+
         if (motion_state.up)
             mouse_acc.y += -ACCELERATION;
         else if (motion_state.down)
@@ -149,11 +172,10 @@ void *mouse_handler() {
         else {
             mouse_acc.x = 0;
         }
-        if(motion_state.mouse_break)
+        if (motion_state.mouse_break)
             max = MAX_SPEED * BREAK_FACTOR;
         else
             max = MAX_SPEED;
-        pthread_mutex_unlock(&mouse_lock);
 
         if (mouse_acc.x > max)
             mouse_acc.x = max;
@@ -171,7 +193,13 @@ void *mouse_handler() {
                                     (int) roundf(mouse_acc.x));
         libevdev_uinput_write_event(synthetic_mouse, EV_REL, REL_Y,
                                     (int) roundf(mouse_acc.y));
+        if (motion_state.scroll_up)
+            libevdev_uinput_write_event(synthetic_mouse, EV_REL, REL_WHEEL, 1);
+        if (motion_state.scroll_down)
+            libevdev_uinput_write_event(synthetic_mouse, EV_REL, REL_WHEEL, -1);
         libevdev_uinput_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
+
+        pthread_mutex_unlock(&mouse_lock);
 
         usleep(1000 * 10);
     }
@@ -186,15 +214,16 @@ int main(int argc, char **argv) {
     sa.sa_flags = 0;
     sigaction(SIGINT, &sa, 0);
     sigaction(SIGTERM, &sa, 0);
+    int verbose = 0;
 
     pthread_mutex_init(&mouse_lock, 0);
-    // const int listen_type = libevdev_event_type_from_name(LISTEN_EVENT);
 
-    if (argc > 1)
-        if (strcmp(argv[1], "--list") == 0) {
+    for (int i = 1; i != argc; ++i) {
+        if (strcmp(argv[i], "--list") == 0)
             get_device_by_phys_name("", 1);
-            return 0;
-        }
+        if (strcmp(argv[i], "--verbose") == 0)
+            verbose = 1;
+    }
 
     struct listen_key_codes key_codes = {
         .up = libevdev_event_code_from_code_name(UP),
@@ -240,15 +269,24 @@ int main(int argc, char **argv) {
     libevdev_enable_event_code(temp_synth_mouse, EV_REL, REL_X, 0);
     libevdev_enable_event_code(temp_synth_mouse, EV_REL, REL_Y, 0);
     libevdev_enable_event_code(temp_synth_mouse, EV_REL, REL_WHEEL, 0);
+    libevdev_enable_event_type(temp_synth_mouse, EV_KEY);
+    libevdev_enable_event_code(temp_synth_mouse, EV_KEY, BTN_LEFT, 0);
+    libevdev_enable_event_code(temp_synth_mouse, EV_KEY, BTN_RIGHT, 0);
+    libevdev_enable_event_code(temp_synth_mouse, EV_KEY, BTN_MIDDLE, 0);
     libevdev_uinput_create_from_device(
         temp_synth_mouse, LIBEVDEV_UINPUT_OPEN_MANAGED, &synthetic_mouse);
     libevdev_free(temp_synth_mouse);
 
     libevdev_grab(current_device, LIBEVDEV_GRAB);
 
-    thread_id = pthread_create(&thread_id, 0, mouse_handler, 0);
+    // thread_id = pthread_create(&thread_id, 0, mouse_handler, 0);
 
     do {
+        if (!thread_running) {
+            thread_running = 1;
+            pthread_create(&thread_id, 0, mouse_handler, 0);
+        }
+
         struct input_event ev;
         rc =
             libevdev_next_event(current_device, LIBEVDEV_READ_FLAG_NORMAL, &ev);
@@ -258,6 +296,8 @@ int main(int argc, char **argv) {
         }
 
         if (ev.type == EV_KEY) {
+            if (verbose)
+                log_event(&ev);
             if (ev.code == key_codes.up) {
                 pthread_mutex_lock(&mouse_lock);
                 if (ev.value == 1)
@@ -265,7 +305,6 @@ int main(int argc, char **argv) {
                 else if (ev.value == 0)
                     motion_state.up = 0;
                 pthread_mutex_unlock(&mouse_lock);
-                debug_print_event(&ev);
                 continue;
             }
             if (ev.code == key_codes.down) {
@@ -275,7 +314,6 @@ int main(int argc, char **argv) {
                 else if (ev.value == 0)
                     motion_state.down = 0;
                 pthread_mutex_unlock(&mouse_lock);
-                debug_print_event(&ev);
                 continue;
             }
             if (ev.code == key_codes.left) {
@@ -285,7 +323,6 @@ int main(int argc, char **argv) {
                 else if (ev.value == 0)
                     motion_state.left = 0;
                 pthread_mutex_unlock(&mouse_lock);
-                debug_print_event(&ev);
                 continue;
             }
             if (ev.code == key_codes.right) {
@@ -295,27 +332,47 @@ int main(int argc, char **argv) {
                 else if (ev.value == 0)
                     motion_state.right = 0;
                 pthread_mutex_unlock(&mouse_lock);
-                debug_print_event(&ev);
                 continue;
             }
             if (ev.code == key_codes.right_click) {
-                debug_print_event(&ev);
+                pthread_mutex_lock(&mouse_lock);
+                libevdev_uinput_write_event(synthetic_mouse, EV_KEY, BTN_RIGHT,
+                                            ev.value);
+                pthread_mutex_unlock(&mouse_lock);
                 continue;
             }
             if (ev.code == key_codes.left_click) {
-                debug_print_event(&ev);
+                pthread_mutex_lock(&mouse_lock);
+                libevdev_uinput_write_event(synthetic_mouse, EV_KEY, BTN_LEFT,
+                                            ev.value);
+                pthread_mutex_unlock(&mouse_lock);
                 continue;
             }
             if (ev.code == key_codes.scroll_down) {
-                debug_print_event(&ev);
+                pthread_mutex_lock(&mouse_lock);
+                if (ev.value == 1) {
+                    motion_state.scroll_down = 1;
+                } else if (ev.value == 0) {
+                    motion_state.scroll_down = 0;
+                }
+                pthread_mutex_unlock(&mouse_lock);
                 continue;
             }
             if (ev.code == key_codes.scroll_up) {
-                debug_print_event(&ev);
+                pthread_mutex_lock(&mouse_lock);
+                if (ev.value == 1) {
+                    motion_state.scroll_up = 1;
+                } else if (ev.value == 0) {
+                    motion_state.scroll_up = 0;
+                }
+                pthread_mutex_unlock(&mouse_lock);
                 continue;
             }
             if (ev.code == key_codes.scroll_click) {
-                debug_print_event(&ev);
+                pthread_mutex_lock(&mouse_lock);
+                libevdev_uinput_write_event(synthetic_mouse, EV_KEY, BTN_MIDDLE,
+                                            ev.value);
+                pthread_mutex_unlock(&mouse_lock);
                 continue;
             }
             if (ev.code == key_codes.mouse_break) {
@@ -325,7 +382,6 @@ int main(int argc, char **argv) {
                 else if (ev.value == 0)
                     motion_state.mouse_break = 0;
                 pthread_mutex_unlock(&mouse_lock);
-                debug_print_event(&ev);
                 continue;
             }
         }
