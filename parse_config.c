@@ -9,22 +9,24 @@
 
 #define LOCAL_CONF_NAME "synthetic.conf"
 
-#define UP "UP="
-#define DOWN "DOWN="
-#define LEFT "LEFT="
-#define RIGHT "RIGHT="
-#define RIGHT_CLICK "RIGHT_CLICK="
-#define LEFT_CLICK "LEFT_CLICK="
-#define SCROLL_DOWN "SCROLL_DOWN="
-#define SCROLL_UP "SCROLL_UP="
-#define SCROLL_CLICK "SCROLL_CLICK="
-#define MOUSE_BREAK "MOUSE_BREAK="
+// #define UP "UP="
+// #define DOWN "DOWN="
+// #define LEFT "LEFT="
+// #define RIGHT "RIGHT="
+// #define RIGHT_CLICK "RIGHT_CLICK="
+// #define LEFT_CLICK "LEFT_CLICK="
+// #define SCROLL_DOWN "SCROLL_DOWN="
+// #define SCROLL_UP "SCROLL_UP="
+// #define SCROLL_CLICK "SCROLL_CLICK="
+// #define MOUSE_BREAK "MOUSE_BREAK="
 
 #define ACCELERATION "ACCELERATION="
 #define BREAK_FACTOR "BREAK_FACTOR="
 #define MAX_SPEED "MAX_SPEED="
 
 #define PHYS_NAME "PHYS_NAME="
+
+#define PASSTHROUGH '!'
 
 ptrdiff_t strip_fluff(char *str) {
     char *read = str, *write = str;
@@ -40,6 +42,7 @@ ptrdiff_t strip_fluff(char *str) {
         }
 
         *write = toupper(*read);
+        // *write = *read;
 
         ++write;
         ++read;
@@ -52,45 +55,17 @@ ptrdiff_t strip_fluff(char *str) {
 int is_hotkey(const char *line, struct conf_data *data) {
     int len = 0;
 
-    if (strncmp(line, UP, (len = strlen(UP))) == 0) {
-        data->up = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, DOWN, (len = strlen(DOWN))) == 0) {
-        data->down = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, LEFT, (len = strlen(LEFT))) == 0) {
-        data->left = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, RIGHT, (len = strlen(RIGHT))) == 0) {
-        data->right = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, RIGHT_CLICK, (len = strlen(RIGHT_CLICK))) == 0) {
-        data->right_click = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, LEFT_CLICK, (len = strlen(LEFT_CLICK))) == 0) {
-        data->left_click = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, SCROLL_DOWN, (len = strlen(SCROLL_DOWN))) == 0) {
-        data->scroll_down = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, SCROLL_UP, (len = strlen(SCROLL_UP))) == 0) {
-        data->scroll_up = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, SCROLL_CLICK, (len = strlen(SCROLL_CLICK))) == 0) {
-        data->scroll_click = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, MOUSE_BREAK, (len = strlen(MOUSE_BREAK))) == 0) {
-        data->mouse_break = libevdev_event_code_from_code_name(line + len);
-        return 1;
+    for (int i = 0; i < KEY_ID_COUNT; i++) {
+        const char *key_name = key_names[i];
+        // printf("key name %s\n", key_names[i]);
+        if (strncmp(line, key_name, (len = strlen(key_name))) == 0) {
+            if (*(line + len) == PASSTHROUGH) {
+                data->keys[i].pass = -1;
+                len++;
+            }
+            data->keys[i].code = libevdev_event_code_from_code_name(line + len);
+            return 1;
+        }
     }
 
     return 0;
@@ -154,32 +129,18 @@ struct conf_data parse_config() {
     free(buf);
     fclose(conf_file);
 
+    for (int i = 0; i < KEY_ID_COUNT; i++) {
+        printf("%s: %s (code=%d pass=%d)\n", key_names[i],
+               libevdev_event_code_get_name(EV_KEY, data.keys[i].code),
+               data.keys[i].code, data.keys[i].pass);
+    }
     // TODO: Check if data is filled
-    printf("up: %s\n"
-           "down: %s\n"
-           "left: %s\n"
-           "right: %s\n"
-           "right_click: %s\n"
-           "left_click: %s\n"
-           "scroll_down: %s\n"
-           "scroll_up: %s\n"
-           "scroll_click: %s\n"
-           "mouse_break: %d\n"
-           "phys_name: %s\n"
+    printf("phys_name: %s\n"
            "acceleration: %f\n"
            "break_factor: %f\n"
            "max_speed: %f\n",
-           libevdev_event_code_get_name(EV_KEY, data.up),
-           libevdev_event_code_get_name(EV_KEY, data.down),
-           libevdev_event_code_get_name(EV_KEY, data.left),
-           libevdev_event_code_get_name(EV_KEY, data.right),
-           libevdev_event_code_get_name(EV_KEY, data.right_click),
-           libevdev_event_code_get_name(EV_KEY, data.left_click),
-           libevdev_event_code_get_name(EV_KEY, data.scroll_down),
-           libevdev_event_code_get_name(EV_KEY, data.scroll_up),
-           libevdev_event_code_get_name(EV_KEY, data.scroll_click),
-           data.mouse_break, data.phys_name ? data.phys_name : "",
-           data.acceleration, data.break_factor, data.max_speed);
+           data.phys_name ? data.phys_name : "", data.acceleration,
+           data.break_factor, data.max_speed);
 
     return data;
 }
