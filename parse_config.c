@@ -7,179 +7,276 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define DEV_ID "dev_id"
+#define PASSTHROUGH '!'
 #define LOCAL_CONF_NAME "synthetic.conf"
+#define ENABLE_PASSTHROUGH "enable_passthrough"
 
-#define UP "UP="
-#define DOWN "DOWN="
-#define LEFT "LEFT="
-#define RIGHT "RIGHT="
-#define RIGHT_CLICK "RIGHT_CLICK="
-#define LEFT_CLICK "LEFT_CLICK="
-#define SCROLL_DOWN "SCROLL_DOWN="
-#define SCROLL_UP "SCROLL_UP="
-#define SCROLL_CLICK "SCROLL_CLICK="
-#define MOUSE_BREAK "MOUSE_BREAK="
+extern int quiet; // main.c
 
-#define ACCELERATION "ACCELERATION="
-#define BREAK_FACTOR "BREAK_FACTOR="
-#define MAX_SPEED "MAX_SPEED="
+enum READMODE {
+    PROPERTY,
+    KEY_VALUE,
+    VAR_VALUE,
+    DEV_VALUE,
+    RANGE,
+    SKIPLINE,
+    WHITESPACE,
+    READ,
+};
 
-#define PHYS_NAME "PHYS_NAME="
+static const char *key_names[KEY_ID_COUNT] = {
+#define GENERATE_KEY_NAME(_, KEY_NAME_LOWER, __) #KEY_NAME_LOWER,
+    X_FOR_EACH_KEY(GENERATE_KEY_NAME)
+#undef GENERATE_KEY_NAME
+};
 
-ptrdiff_t strip_fluff(char *str) {
-    char *read = str, *write = str;
+static const char *var_names[VAR_ID_COUNT] = {
+#define GENERATE_VAR_NAME(_, VAR_NAME_LOWER) #VAR_NAME_LOWER,
+    X_FOR_EACH_VAR(GENERATE_VAR_NAME)
+#undef GENERATE_VAR_NAME
+};
 
-    while (*read != '\0') {
-        if (isspace(*read)) {
-            ++read;
-            continue;
-        }
+#define STARTSIZE 16
+char *unibuf(int c) {
+    static size_t size = STARTSIZE;
+    static char *buf = 0;
+    static char *write = 0;
 
-        if (*read == '#') {
-            break;
-        }
-
-        *write = toupper(*read);
-
-        ++write;
-        ++read;
+    if (buf == 0) {
+        buf = malloc(size);
+        memset(buf, 0, size);
+        write = buf;
     }
 
-    *write = '\0';
-    return write - str;
+    if (c == EOF) {
+        free(buf);
+        buf = write = 0;
+        size = STARTSIZE;
+        return 0;
+    }
+
+    *write++ = (char) c;
+
+    if (size == (size_t) (write - buf)) {
+        buf = realloc(buf, size * 2);
+        memset(buf + size, 0, size);
+        write = buf + size;
+        size *= 2;
+    }
+
+    return buf;
 }
+#undef STARTSIZE
 
-int is_hotkey(const char *line, struct conf_data *data) {
-    int len = 0;
-
-    if (strncmp(line, UP, (len = strlen(UP))) == 0) {
-        data->up = libevdev_event_code_from_code_name(line + len);
-        return 1;
+int is_key(char *buf, enum KEY_ID *key_id) {
+    for (int i = 0; i != KEY_ID_COUNT; ++i) {
+        if (strcmp(buf, key_names[i]) == 0) {
+            *key_id = i;
+            return 1;
+        }
     }
-    if (strncmp(line, DOWN, (len = strlen(DOWN))) == 0) {
-        data->down = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, LEFT, (len = strlen(LEFT))) == 0) {
-        data->left = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, RIGHT, (len = strlen(RIGHT))) == 0) {
-        data->right = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, RIGHT_CLICK, (len = strlen(RIGHT_CLICK))) == 0) {
-        data->right_click = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, LEFT_CLICK, (len = strlen(LEFT_CLICK))) == 0) {
-        data->left_click = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, SCROLL_DOWN, (len = strlen(SCROLL_DOWN))) == 0) {
-        data->scroll_down = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, SCROLL_UP, (len = strlen(SCROLL_UP))) == 0) {
-        data->scroll_up = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, SCROLL_CLICK, (len = strlen(SCROLL_CLICK))) == 0) {
-        data->scroll_click = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-    if (strncmp(line, MOUSE_BREAK, (len = strlen(MOUSE_BREAK))) == 0) {
-        data->mouse_break = libevdev_event_code_from_code_name(line + len);
-        return 1;
-    }
-
     return 0;
 }
 
-int is_var(const char *line, struct conf_data *data) {
-    int len;
-
-    if (strncmp(line, ACCELERATION, (len = strlen(ACCELERATION))) == 0) {
-        char *endptr = 0;
-        data->acceleration = strtof(line + len, &endptr);
-        return endptr != line + len;
+int is_var(char *buf, enum VAR_ID *var_id) {
+    for (int i = 0; i != VAR_ID_COUNT; ++i) {
+        if (strcmp(buf, var_names[i]) == 0) {
+            *var_id = i;
+            return 1;
+        }
     }
-
-    if (strncmp(line, BREAK_FACTOR, (len = strlen(BREAK_FACTOR))) == 0) {
-        char *endptr = 0;
-        data->break_factor = strtof(line + len, &endptr);
-        return endptr != line + len;
-    }
-
-    if (strncmp(line, MAX_SPEED, (len = strlen(MAX_SPEED))) == 0) {
-        char *endptr = 0;
-        data->max_speed = strtof(line + len, &endptr);
-        return endptr != line + len;
-    }
-
     return 0;
+}
+
+int is_range(char *buf, int *release, int *press) {
+    char *separator = strstr(buf, "..");
+    char *endptr;
+
+    if (separator == 0)
+        return 0;
+
+    *separator = '\0';
+
+    long release_value = strtol(buf, &endptr, 10);
+    if (endptr == buf || *endptr != '\0') {
+        *separator = '.';
+        return 0;
+    }
+
+    char *press_str = separator + 2;
+    long press_value = strtol(press_str, &endptr, 10);
+    if (endptr == press_str || *endptr != '\0') {
+        *separator = '.';
+        return 0;
+    }
+
+    *separator = '.';
+    *release = (int) release_value;
+    *press = (int) press_value;
+    return 1;
+}
+
+const char *key_repr(struct key *key) {
+    if (key->ev_code == 0 && key->ev_type == 0)
+        return "(Unassigned)";
+    return libevdev_event_code_get_name(key->ev_type, key->ev_code);
 }
 
 struct conf_data parse_config() {
     struct conf_data data = {0};
-    size_t size = 16;
-    char *buf = malloc(size);
-    ptrdiff_t line;
+    char *buf = 0;
+    int c;
     FILE *conf_file = fopen(LOCAL_CONF_NAME, "r");
+    enum READMODE mode = WHITESPACE;
+    enum READMODE next_mode = PROPERTY;
+    enum KEY_ID key_id = KEY_ID_COUNT;
+    enum VAR_ID var_id = VAR_ID_COUNT;
+    char *endptr; // for strtof()
 
     if (conf_file == 0) {
         fprintf(stderr, "Error opening config file %s\n", LOCAL_CONF_NAME);
         exit(1);
     }
 
-    while (getline(&buf, &size, conf_file) != EOF) {
-        line = strip_fluff(buf);
-        if (line == 0)
-            continue;
+    while ((c = getc(conf_file)) != EOF) {
+        if (c == '#')
+            mode = SKIPLINE;
 
-        if (is_hotkey(buf, &data))
-            continue;
+        switch (mode) {
+        case PROPERTY:
+            if (is_key(buf, &key_id)) {
+                next_mode = KEY_VALUE;
+                mode = WHITESPACE;
+                break;
+            }
 
-        if (is_var(buf, &data))
-            continue;
+            if (is_var(buf, &var_id)) {
+                next_mode = VAR_VALUE;
+                mode = WHITESPACE;
+                break;
+            }
 
-        int len;
-        if (strncmp(buf, PHYS_NAME, (len = strlen(PHYS_NAME))) == 0) {
-            for (char *c = buf + len; *c != '\0'; ++c)
-                *c = tolower(*c);
-            data.phys_name = strdup(buf + len);
+            if (strcmp(buf, DEV_ID) == 0) {
+                next_mode = DEV_VALUE;
+                mode = WHITESPACE;
+                break;
+            }
+
+            if (strcmp(buf, ENABLE_PASSTHROUGH) == 0) {
+                data.enable_passthrough = 1;
+                mode = WHITESPACE;
+            }
+
+            fprintf(stderr, "Could not parse property: %s\n", buf);
+            exit(5);
+            break;
+        case KEY_VALUE:
+            if (buf[0] == PASSTHROUGH) {
+                data.keys[key_id].is_pass = -1;
+                if (buf[1] == '\0') {
+                    mode = WHITESPACE;
+                    next_mode = KEY_VALUE;
+                    break;
+                }
+                buf++;
+            }
+
+            data.keys[key_id].ev_code = libevdev_event_code_from_code_name(buf);
+            // if (data.keys[key_id].ev_code == -1) {
+            //     fprintf(stderr, "Unknown key code name: %s\n", buf);
+            //     exit(5);
+            // }
+
+            data.keys[key_id].press = 1;
+            data.keys[key_id].release = 0;
+
+            data.keys[key_id].ev_type = libevdev_event_type_from_code_name(buf);
+
+            mode = WHITESPACE;
+            next_mode = RANGE;
+            break;
+        case VAR_VALUE:
+            data.vars[var_id] = strtof(buf, &endptr);
+
+            if (endptr == buf) {
+                fprintf(stderr,
+                        "%s failed parse (expected floating point compatible "
+                        "number)\n",
+                        buf);
+                exit(5);
+            }
+
+            mode = WHITESPACE;
+            next_mode = PROPERTY;
+            break;
+        case DEV_VALUE:
+            data.dev_id = strdup(buf);
+            mode = WHITESPACE;
+            next_mode = PROPERTY;
+            break;
+        case RANGE:
+            if (is_range(buf, &data.keys[key_id].release,
+                         &data.keys[key_id].press)) {
+                mode = WHITESPACE;
+                next_mode = PROPERTY;
+            } else {
+                mode = PROPERTY;
+                ungetc(c, conf_file);
+            }
+            break;
+        case SKIPLINE:
+            if (c == '\n') {
+                mode = WHITESPACE;
+            }
+            break;
+        case WHITESPACE:
+            if (!isspace(c)) {
+                unibuf(EOF);
+                buf = unibuf(c);
+                mode = READ;
+            }
+            break;
+        case READ:
+            if (!isspace(c)) {
+                buf = unibuf(c);
+            } else {
+                mode = next_mode;
+                ungetc(c, conf_file);
+            }
+            break;
         }
     }
 
-    free(buf);
+    unibuf(EOF);
+
     fclose(conf_file);
 
-    // TODO: Check if data is filled
-    printf("up: %s\n"
-           "down: %s\n"
-           "left: %s\n"
-           "right: %s\n"
-           "right_click: %s\n"
-           "left_click: %s\n"
-           "scroll_down: %s\n"
-           "scroll_up: %s\n"
-           "scroll_click: %s\n"
-           "mouse_break: %d\n"
-           "phys_name: %s\n"
-           "acceleration: %f\n"
-           "break_factor: %f\n"
-           "max_speed: %f\n",
-           libevdev_event_code_get_name(EV_KEY, data.up),
-           libevdev_event_code_get_name(EV_KEY, data.down),
-           libevdev_event_code_get_name(EV_KEY, data.left),
-           libevdev_event_code_get_name(EV_KEY, data.right),
-           libevdev_event_code_get_name(EV_KEY, data.right_click),
-           libevdev_event_code_get_name(EV_KEY, data.left_click),
-           libevdev_event_code_get_name(EV_KEY, data.scroll_down),
-           libevdev_event_code_get_name(EV_KEY, data.scroll_up),
-           libevdev_event_code_get_name(EV_KEY, data.scroll_click),
-           data.mouse_break, data.phys_name ? data.phys_name : "",
-           data.acceleration, data.break_factor, data.max_speed);
+    if (quiet)
+        return data;
+
+    printf("\nConfig\n");
+    printf("  dev_id: %s\n", data.dev_id ? data.dev_id : "");
+
+    printf("\nKey bindings\n");
+    printf("  %-12s %-24s %6s %6s %8s %6s\n", "action", "evdev", "code", "pass",
+           "release", "press");
+    printf("  %-12s %-24s %6s %6s %8s %6s\n", "------------",
+           "------------------------", "------", "------", "--------",
+           "------");
+    for (int key_id = 0; key_id < KEY_ID_COUNT; key_id++) {
+        printf("  %-12s %-24s %6d %6s %8d %6d\n", key_names[key_id],
+               key_repr(&data.keys[key_id]), data.keys[key_id].ev_code,
+               data.keys[key_id].is_pass ? "yes" : "no",
+               data.keys[key_id].release, data.keys[key_id].press);
+    }
+
+    // TODO: Rather than checking if `data.vars` is filled, set sane defaults
+
+    printf("\n");
+    for (int var_id = 0; var_id != VAR_ID_COUNT; ++var_id) {
+        printf("%s:\t%f\n", var_names[var_id], data.vars[var_id]);
+    }
 
     return data;
 }
