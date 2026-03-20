@@ -18,8 +18,22 @@
 
 #define EVENTPATH "/dev/input/by-id/"
 
+#define PASSTHROUGH_FRAME_MAX 32
 #define SYNTH_PASSTHROUGH_NAME "Synthetic Passthrough"
 #define SYNTH_MOUSE_NAME "Synthetic Mouse"
+#define HELP                                                                \
+    "Usage: synthetic-mouse [options]\n"                                    \
+    "\n"                                                                    \
+    "Reads configuration from ./synthetic.conf, "                           \
+    "$XDG_CONFIG_HOME/synthetic-mouse/\n"                                   \
+    "synthetic.conf, or /etc/synthetic-mouse/synthetic.conf,\n"             \
+    "opens the configured input device, and emits synthetic mouse events.\n" \
+    "\n"                                                                    \
+    "Options:\n"                                                            \
+    "  --list-devices  List /dev/input/by-id devices and exit.\n"           \
+    "  --log-keys      Print source events and passthrough events.\n"       \
+    "  --quiet         Suppress non-critical diagnostics.\n"                \
+    "  --help          Show this help text.\n"
 
 struct v2 {
     float x;
@@ -36,6 +50,10 @@ int click_action[CLICKABLE_ID_COUNT] = {
     X_FOR_EACH_CLICKABLE(GENERATE_CLICK_ACTION)
 #undef GENERATE_CLICK_ACTION
 };
+struct input_event passthrough_frame[PASSTHROUGH_FRAME_MAX];
+size_t passthrough_frame_len = 0;
+struct input_event passthrough_pending[PASSTHROUGH_FRAME_MAX];
+size_t passthrough_pending_len = 0;
 
 pthread_mutex_t motion_lock;
 pthread_t thread_id;
@@ -194,6 +212,57 @@ void log_event(struct input_event *ev) {
            libevdev_event_code_get_name(ev->type, ev->code), ev->value);
 }
 
+static void queue_passthrough_event(const struct input_event *ev) {
+    if (passthrough_frame_len == PASSTHROUGH_FRAME_MAX) {
+        if (!quiet)
+            fprintf(stderr,
+                    "Passthrough frame overflow, dropping event %s %s\n",
+                    libevdev_event_type_get_name(ev->type),
+                    libevdev_event_code_get_name(ev->type, ev->code));
+        return;
+    }
+
+    passthrough_frame[passthrough_frame_len++] = *ev;
+}
+
+static void queue_passthrough_pending(const struct input_event *ev) {
+    if (passthrough_pending_len == PASSTHROUGH_FRAME_MAX) {
+        if (!quiet)
+            fprintf(stderr,
+                    "Passthrough pending overflow, dropping event %s %s\n",
+                    libevdev_event_type_get_name(ev->type),
+                    libevdev_event_code_get_name(ev->type, ev->code));
+        return;
+    }
+
+    passthrough_pending[passthrough_pending_len++] = *ev;
+}
+
+static void commit_passthrough_pending(void) {
+    for (size_t i = 0; i < passthrough_pending_len; ++i)
+        queue_passthrough_event(&passthrough_pending[i]);
+
+    passthrough_pending_len = 0;
+}
+
+static void clear_passthrough_pending(void) {
+    passthrough_pending_len = 0;
+}
+
+static void flush_passthrough_frame(int key_logging) {
+    for (size_t i = 0; i < passthrough_frame_len; ++i) {
+        struct input_event *ev = &passthrough_frame[i];
+        if (key_logging)
+            printf("passthrough: %s %s %d\n",
+                   libevdev_event_type_get_name(ev->type),
+                   libevdev_event_code_get_name(ev->type, ev->code), ev->value);
+        libevdev_uinput_write_event(synthetic_passthrough, ev->type, ev->code,
+                                    ev->value);
+    }
+
+    passthrough_frame_len = 0;
+}
+
 void *mouse_handler() {
     struct v2 input_direction = {0};
     float max = conf_data.vars[VAR_ID_MAX_SPEED];
@@ -253,7 +322,6 @@ void *mouse_handler() {
         struct v2 velocity = v2_scale(v2_normalize(input_direction), speed);
         velocity.x *= fabsf(input_direction.x);
         velocity.y *= fabsf(input_direction.y);
-
 
         if (memcmp(&motion_state, &(const float[HOLDABLE_ID_COUNT]) {0},
                    sizeof motion_state) != 0) {
@@ -315,6 +383,10 @@ int main(int argc, char **argv) {
             key_logging = 1;
         if (strcmp(argv[i], "--quiet") == 0)
             quiet = 1;
+        if (strcmp(argv[i], "--help") == 0){
+            printf(HELP"\n");
+            exit(0);
+        }
     }
 
     conf_data = parse_config();
@@ -382,6 +454,28 @@ int main(int argc, char **argv) {
         if (key_logging)
             log_event(&ev);
 
+        if (conf_data.enable_passthrough && ev.type == EV_MSC) {
+            queue_passthrough_pending(&ev);
+            continue;
+        }
+
+        if (conf_data.enable_passthrough && ev.type == EV_SYN) {
+            if (ev.code != SYN_REPORT) {
+                if (passthrough_frame_len != 0) {
+                    commit_passthrough_pending();
+                    queue_passthrough_event(&ev);
+                } else {
+                    clear_passthrough_pending();
+                }
+            } else if (passthrough_frame_len != 0) {
+                queue_passthrough_event(&ev);
+                flush_passthrough_frame(key_logging);
+            } else {
+                clear_passthrough_pending();
+            }
+            continue;
+        }
+
         for (int key_id = 0; key_id < HOLDABLE_ID_COUNT; key_id++) {
             if (!(ev.code == conf_data.keys[key_id].ev_code &&
                   ev.type == conf_data.keys[key_id].ev_type))
@@ -394,8 +488,10 @@ int main(int argc, char **argv) {
             float strength = (val - rel) * (1 / (pre - rel));
 
             if (conf_data.keys[key_id].ev_type == EV_KEY) {
-                if (strength > 1 || strength < 0)
+                if (strength > 1 || strength < 0) {
+                    is_matched = 1;
                     continue;
+                }
             } else {
                 if (strength > 1 || strength <= 0) {
                     pthread_mutex_lock(&motion_lock);
@@ -416,8 +512,10 @@ int main(int argc, char **argv) {
                 break;
         }
 
-        if (is_matched && !should_passthrough)
+        if (is_matched && !should_passthrough) {
+            clear_passthrough_pending();
             continue;
+        }
 
         for (int key_id = HOLDABLE_ID_COUNT; key_id != KEY_ID_COUNT; ++key_id) {
             if (!(ev.code == conf_data.keys[key_id].ev_code &&
@@ -428,9 +526,18 @@ int main(int argc, char **argv) {
                 conf_data.keys[key_id].ev_type == 0)
                 continue;
 
-            int click_id = key_id - HOLDABLE_ID_COUNT;
-            // printf("Pushing %s\n", libevdev_event_code_get_name(
-            //                            EV_KEY, click_action[click_id]));
+            const float val = ev.value;
+            const float pre = conf_data.keys[key_id].press;
+            const float rel = conf_data.keys[key_id].release;
+            float strength = (val - rel) * (1 / (pre - rel));
+
+            if (conf_data.keys[key_id].ev_type == EV_KEY &&
+                (strength > 1 || strength < 0)) {
+                is_matched = 1;
+                continue;
+            }
+
+            const int click_id = key_id - HOLDABLE_ID_COUNT;
             libevdev_uinput_write_event(
                 synthetic_mouse, EV_KEY, click_action[click_id],
                 ev.value == conf_data.keys[key_id].press);
@@ -443,17 +550,13 @@ int main(int argc, char **argv) {
                 break;
         }
 
-        if (is_matched && !should_passthrough)
+        if (is_matched && !should_passthrough) {
+            clear_passthrough_pending();
             continue;
-
+        }
         if (conf_data.enable_passthrough) {
-            if (key_logging)
-                printf("passthrough: %s %s %d\n",
-                       libevdev_event_type_get_name(ev.type),
-                       libevdev_event_code_get_name(ev.type, ev.code),
-                       ev.value);
-            libevdev_uinput_write_event(synthetic_passthrough, ev.type, ev.code,
-                                        ev.value);
+            commit_passthrough_pending();
+            queue_passthrough_event(&ev);
         }
     } while (rc == 1 || rc == 0 || rc == -EAGAIN);
 

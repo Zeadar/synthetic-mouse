@@ -1,6 +1,7 @@
 #include "libevdev/libevdev.h"
 #include "synthetic-mouse.h"
 #include <ctype.h>
+#include <limits.h>
 #include <linux/input-event-codes.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -10,6 +11,8 @@
 #define DEV_ID "dev_id"
 #define PASSTHROUGH '!'
 #define LOCAL_CONF_NAME "synthetic.conf"
+#define XDG_CONF_SUBPATH "synthetic-mouse/synthetic.conf"
+#define SYSTEM_CONF_NAME "/etc/synthetic-mouse/synthetic.conf"
 #define ENABLE_PASSTHROUGH "enable_passthrough"
 
 extern int quiet; // main.c
@@ -123,11 +126,50 @@ const char *key_repr(struct key *key) {
     return libevdev_event_code_get_name(key->ev_type, key->ev_code);
 }
 
+static FILE *open_config_file(char *resolved_path, size_t resolved_path_size) {
+    const char *xdg_config_home = getenv("XDG_CONFIG_HOME");
+    const char *home = getenv("HOME");
+    char xdg_conf_path[PATH_MAX];
+    const char *candidates[] = {
+        LOCAL_CONF_NAME,
+        0,
+        SYSTEM_CONF_NAME,
+    };
+
+    if (xdg_config_home != 0 && xdg_config_home[0] != '\0') {
+        snprintf(xdg_conf_path, sizeof(xdg_conf_path), "%s/%s", xdg_config_home,
+                 XDG_CONF_SUBPATH);
+        candidates[1] = xdg_conf_path;
+    } else if (home != 0 && home[0] != '\0') {
+        snprintf(xdg_conf_path, sizeof(xdg_conf_path), "%s/.config/%s", home,
+                 XDG_CONF_SUBPATH);
+        candidates[1] = xdg_conf_path;
+    }
+
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {
+        if (candidates[i] == 0)
+            continue;
+
+        FILE *conf_file = fopen(candidates[i], "r");
+        if (conf_file != 0) {
+            snprintf(resolved_path, resolved_path_size, "%s", candidates[i]);
+            return conf_file;
+        }
+    }
+
+    fprintf(stderr, "Error opening config file. Tried: %s", LOCAL_CONF_NAME);
+    if (candidates[1] != 0)
+        fprintf(stderr, ", %s", candidates[1]);
+    fprintf(stderr, ", %s\n", SYSTEM_CONF_NAME);
+    exit(1);
+}
+
 struct conf_data parse_config() {
     struct conf_data data = {0};
     char *buf = 0;
     int c;
-    FILE *conf_file = fopen(LOCAL_CONF_NAME, "r");
+    char conf_path[PATH_MAX];
+    FILE *conf_file = open_config_file(conf_path, sizeof(conf_path));
     enum READMODE mode = WHITESPACE;
     enum READMODE next_mode = PROPERTY;
     enum KEY_ID key_id = KEY_ID_COUNT;
@@ -139,11 +181,6 @@ struct conf_data parse_config() {
     data.vars[VAR_ID_ACCELERATION] = 0.5;
     data.vars[VAR_ID_BREAK_FACTOR] = 0.25;
     data.vars[VAR_ID_MAX_SPEED] = 12;
-
-    if (conf_file == 0) {
-        fprintf(stderr, "Error opening config file %s\n", LOCAL_CONF_NAME);
-        exit(1);
-    }
 
     while ((c = getc(conf_file)) != EOF) {
         if (c == '#')
