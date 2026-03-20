@@ -10,16 +10,17 @@ Synthetic Mouse is a small C program that reads events from a chosen input devic
 - `synthetic.conf`: Active configuration file.
 - `synthetic_controller.conf`: Sample/controller-oriented configuration.
 - `synthetic_keyboard.conf`: Sample/keyboard-oriented configuration.
-- `Makefile`: Build targets.
+- `meson.build`: Meson build definition for the `out` executable.
 
 ## Dependencies
-- Build-time: `gcc`, `make`, `pkg-config`, `libevdev` headers (`libevdev-dev` on many distros).
+- Build-time: `gcc`, `meson`, `ninja`, `pkg-config`, `libevdev` headers (`libevdev-dev` on many distros).
 - Run-time: access to `/dev/input/*` and uinput (typically root or `input` group, plus udev permissions).
 
 ## Build
-- Debug build: `make` or `make debug`
-- Release build: `make release`
-- Clean: `make clean`
+- Configure debug build: `meson setup build`
+- Build: `meson compile -C build`
+- Configure release build: `meson setup build --buildtype=release --reconfigure`
+- Clean build dir: `rm -rf build`
 
 Binary output: `build/out`
 
@@ -60,6 +61,6 @@ Edit `synthetic.conf`:
 
 ## Testing
 No automated tests are present.
-- Basic verification: `make`
+- Basic verification: `meson setup build && meson compile -C build`
 - Manual verification: run `sudo ./build/out --list-devices`, confirm `dev_id`, then run with the intended config and observe pointer/button behavior.
 - `--log-keys` is useful when discovering event type/code names and axis ranges.
