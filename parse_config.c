@@ -134,6 +134,12 @@ struct conf_data parse_config() {
     enum VAR_ID var_id = VAR_ID_COUNT;
     char *endptr; // for strtof()
 
+    // sane defaults
+    data.vars[VAR_ID_WHEEL] = 120;
+    data.vars[VAR_ID_ACCELERATION] = 0.5;
+    data.vars[VAR_ID_BREAK_FACTOR] = 0.25;
+    data.vars[VAR_ID_MAX_SPEED] = 12;
+
     if (conf_file == 0) {
         fprintf(stderr, "Error opening config file %s\n", LOCAL_CONF_NAME);
         exit(1);
@@ -166,6 +172,7 @@ struct conf_data parse_config() {
             if (strcmp(buf, ENABLE_PASSTHROUGH) == 0) {
                 data.enable_passthrough = 1;
                 mode = WHITESPACE;
+                break;
             }
 
             fprintf(stderr, "Could not parse property: %s\n", buf);
@@ -257,6 +264,8 @@ struct conf_data parse_config() {
 
     printf("\nConfig\n");
     printf("  dev_id: %s\n", data.dev_id ? data.dev_id : "");
+    if (data.enable_passthrough)
+        printf("\nPassthrough enabled!\n");
 
     printf("\nKey bindings\n");
     printf("  %-12s %-24s %6s %6s %8s %6s\n", "action", "evdev", "code", "pass",
@@ -273,9 +282,11 @@ struct conf_data parse_config() {
 
     // TODO: Rather than checking if `data.vars` is filled, set sane defaults
 
-    printf("\n");
+    printf("\nVariables\n");
+    printf("  %-15s %10s\n", "name", "value");
+    printf("  %-15s %10s\n", "---------------", "----------");
     for (int var_id = 0; var_id != VAR_ID_COUNT; ++var_id) {
-        printf("%s:\t%f\n", var_names[var_id], data.vars[var_id]);
+        printf("  %-15s %10.3f\n", var_names[var_id], data.vars[var_id]);
     }
 
     return data;

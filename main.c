@@ -21,16 +21,6 @@
 #define SYNTH_PASSTHROUGH_NAME "Synthetic Passthrough"
 #define SYNTH_MOUSE_NAME "Synthetic Mouse"
 
-// struct holdable_state {
-//     unsigned char held[HOLDABLE_ID_COUNT];
-// };
-
-// struct motion_state {
-// #define GENERATE_FIELD(_, KEY_NAME_LOWER) unsigned char KEY_NAME_LOWER;
-//     X_FOR_EACH_KEY(GENERATE_FIELD)
-// #undef GENERATE_FIELD
-// };
-
 struct v2 {
     float x;
     float y;
@@ -46,9 +36,6 @@ int click_action[CLICKABLE_ID_COUNT] = {
     X_FOR_EACH_CLICKABLE(GENERATE_CLICK_ACTION)
 #undef GENERATE_CLICK_ACTION
 };
-
-// struct motion_state motion_state = {0};
-// struct holdable_state holdable_state = {0};
 
 pthread_mutex_t motion_lock;
 pthread_t thread_id;
@@ -267,6 +254,7 @@ void *mouse_handler() {
         velocity.x *= fabsf(input_direction.x);
         velocity.y *= fabsf(input_direction.y);
 
+
         if (memcmp(&motion_state, &(const float[HOLDABLE_ID_COUNT]) {0},
                    sizeof motion_state) != 0) {
             libevdev_uinput_write_event(synthetic_mouse, EV_REL, REL_X,
@@ -274,13 +262,17 @@ void *mouse_handler() {
             libevdev_uinput_write_event(synthetic_mouse, EV_REL, REL_Y,
                                         (int) roundf(velocity.y));
 
-            // TODO: fix gradient for scrolling
-            if (motion_state[HOLDABLE_ID_SCROLL_UP])
-                libevdev_uinput_write_event(synthetic_mouse, EV_REL, REL_WHEEL,
-                                            1);
-            if (motion_state[HOLDABLE_ID_SCROLL_DOWN])
-                libevdev_uinput_write_event(synthetic_mouse, EV_REL, REL_WHEEL,
-                                            -1);
+            float mb = motion_state[HOLDABLE_ID_MOUSE_BREAK]
+                           ? conf_data.vars[VAR_ID_BREAK_FACTOR]
+                           : 1;
+            libevdev_uinput_write_event(
+                synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
+                (int) roundf(conf_data.vars[VAR_ID_WHEEL] *
+                             motion_state[HOLDABLE_ID_SCROLL_UP] * mb));
+            libevdev_uinput_write_event(
+                synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
+                -(int) roundf(conf_data.vars[VAR_ID_WHEEL]) *
+                    motion_state[HOLDABLE_ID_SCROLL_DOWN] * mb);
             libevdev_uinput_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
         }
 
@@ -345,6 +337,7 @@ int main(int argc, char **argv) {
                                            &synthetic_passthrough);
         libevdev_free(temp_synth_pass);
     }
+
     // mouse setup
     struct libevdev *temp_synth_mouse = libevdev_new();
     libevdev_set_name(temp_synth_mouse, SYNTH_MOUSE_NAME);
@@ -352,7 +345,7 @@ int main(int argc, char **argv) {
     libevdev_enable_event_type(temp_synth_mouse, EV_REL);
     libevdev_enable_event_code(temp_synth_mouse, EV_REL, REL_X, 0);
     libevdev_enable_event_code(temp_synth_mouse, EV_REL, REL_Y, 0);
-    libevdev_enable_event_code(temp_synth_mouse, EV_REL, REL_WHEEL, 0);
+    libevdev_enable_event_code(temp_synth_mouse, EV_REL, REL_WHEEL_HI_RES, 0);
     libevdev_enable_event_type(temp_synth_mouse, EV_KEY);
 #define ENABLE_CLICKABLE_BUTTON(_, __, BUTTON_CODE)                            \
     libevdev_enable_event_code(temp_synth_mouse, EV_KEY, BUTTON_CODE, 0);
@@ -431,11 +424,13 @@ int main(int argc, char **argv) {
                   ev.type == conf_data.keys[key_id].ev_type))
                 continue;
 
-            if ((conf_data.keys[key_id].ev_code ==
-                 conf_data.keys[key_id].ev_type) == 0)
+            if (conf_data.keys[key_id].ev_code == 0 &&
+                conf_data.keys[key_id].ev_type == 0)
                 continue;
 
             int click_id = key_id - HOLDABLE_ID_COUNT;
+            // printf("Pushing %s\n", libevdev_event_code_get_name(
+            //                            EV_KEY, click_action[click_id]));
             libevdev_uinput_write_event(
                 synthetic_mouse, EV_KEY, click_action[click_id],
                 ev.value == conf_data.keys[key_id].press);
@@ -451,13 +446,15 @@ int main(int argc, char **argv) {
         if (is_matched && !should_passthrough)
             continue;
 
-        // if (key_logging)
-        //     printf("passthrough: %s %s %d\n",
-        //            libevdev_event_type_get_name(ev.type),
-        //            libevdev_event_code_get_name(ev.type, ev.code), ev.value);
-        if (conf_data.enable_passthrough)
+        if (conf_data.enable_passthrough) {
+            if (key_logging)
+                printf("passthrough: %s %s %d\n",
+                       libevdev_event_type_get_name(ev.type),
+                       libevdev_event_code_get_name(ev.type, ev.code),
+                       ev.value);
             libevdev_uinput_write_event(synthetic_passthrough, ev.type, ev.code,
                                         ev.value);
+        }
     } while (rc == 1 || rc == 0 || rc == -EAGAIN);
 
     return 0;

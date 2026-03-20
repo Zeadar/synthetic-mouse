@@ -9,7 +9,8 @@
 
 enum HOLDABLE_ID {
 // generate holdable IDs
-#define GENERATE_HOLDABLE_ID(KEY_NAME_UPPER, _, __) HOLDABLE_ID_##KEY_NAME_UPPER,
+#define GENERATE_HOLDABLE_ID(KEY_NAME_UPPER, _, __)                            \
+    HOLDABLE_ID_##KEY_NAME_UPPER,
     X_FOR_EACH_HOLDABLE(GENERATE_HOLDABLE_ID)
 #undef GENERATE_HOLDABLE_IDX
         HOLDABLE_ID_COUNT,
@@ -45,7 +46,8 @@ enum KEY_ID {
 #define X_FOR_EACH_VAR(DO_X)                                                   \
     DO_X(ACCELERATION, acceleration)                                           \
     DO_X(BREAK_FACTOR, break_factor)                                           \
-    DO_X(MAX_SPEED, max_speed)
+    DO_X(MAX_SPEED, max_speed)                                                 \
+    DO_X(WHEEL, wheel)
 
 enum VAR_ID {
 #define GENERATE_VAR_ID(VAR_NAME_UPPER, _) VAR_ID_##VAR_NAME_UPPER,
