@@ -79,6 +79,7 @@ sudo meson install -C build
 
 Optional install payloads:
 
+- by default, `install_config_files`, `install_systemd_unit`, and `install_openrc_service` are all `false`
 - `-Dinstall_config_files=true` installs the default config and both sample configs under `/etc/synthetic-mouse/`
 - `-Dinstall_systemd_unit=true` installs the systemd unit
 - `-Dinstall_openrc_service=true` installs the OpenRC service
@@ -413,3 +414,5 @@ sudo meson install -C build
 sudo rc-update add synthetic-mouse default
 sudo rc-service synthetic-mouse start
 ```
+
+If `meson setup build --wipe` still shows these as user-defined `true`, the existing `build` directory already has saved option values. Remove the build directory or pass explicit `-D...=false` flags to reset them.

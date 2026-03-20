@@ -25,6 +25,7 @@ Synthetic Mouse is a small C program that reads events from a chosen input devic
 - Configure release build in a fresh or wiped build dir: `meson setup build --wipe --buildtype=release`
 - Install: `meson install -C build`
 - Optional install payloads: `-Dinstall_config_files=true`, `-Dinstall_systemd_unit=true`, `-Dinstall_openrc_service=true`
+- Install tags: `runtime`, `config`, `systemd`, `openrc`
 - Clean build dir: `rm -rf build`
 
 Binary output: `build/synthetic-mouse`
@@ -82,4 +83,5 @@ No automated tests are present.
 - Manual verification: run `sudo ./build/synthetic-mouse --list-devices`, confirm `dev_id`, then run with the intended config and observe pointer/button behavior.
 - `--log-keys` is useful when discovering event type/code names and axis ranges.
 - Installation verification: `meson setup build --wipe -Dinstall_config_files=true -Dinstall_systemd_unit=true -Dinstall_openrc_service=true && meson install -C build --destdir /tmp/synthetic-mouse-stage`
+- Tag-based installation verification: `meson install -C build --destdir /tmp/synthetic-mouse-stage --tags runtime,config`
 - Inspect staged installs under `/tmp/synthetic-mouse-stage/usr/local/` for the binary, config files, systemd unit, and OpenRC script.

@@ -32,6 +32,7 @@ executable(
         math_dep,
     ],
     install: true,
+    install_tag: 'runtime',
 )
 
 if get_option('install_config_files')
@@ -40,18 +41,21 @@ if get_option('install_config_files')
         install_dir: config_install_dir,
         rename: 'synthetic.conf',
         follow_symlinks: true,
+        install_tag: 'config',
     )
     install_data(
         'synthetic_controller.conf',
         install_dir: config_install_dir,
         rename: 'synthetic_controller.conf.sample',
         follow_symlinks: true,
+        install_tag: 'config',
     )
     install_data(
         'synthetic_keyboard.conf',
         install_dir: config_install_dir,
         rename: 'synthetic_keyboard.conf.sample',
         follow_symlinks: true,
+        install_tag: 'config',
     )
 endif
 
@@ -65,6 +69,7 @@ if get_option('install_systemd_unit')
         configuration: service_conf,
         install: true,
         install_dir: systemd_unit_dir,
+        install_tag: 'systemd',
     )
 endif
 
@@ -79,5 +84,6 @@ if get_option('install_openrc_service')
         install_dir: openrc_service_dir,
         rename: 'synthetic-mouse',
         install_mode: 'rwxr-xr-x',
+        install_tag: 'openrc',
     )
 endif
