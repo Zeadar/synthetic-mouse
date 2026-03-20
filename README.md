@@ -67,12 +67,6 @@ meson setup build --wipe --buildtype=release
 meson compile -C build
 ```
 
-The compiled binary is written to:
-
-```text
-build/synthetic-mouse
-```
-
 ## Installing
 
 Basic install:
@@ -112,10 +106,9 @@ Installed paths depend on Meson `prefix`, `bindir`, and `sysconfdir`. With the d
 Available commands:
 
 ```sh
-./build/synthetic-mouse --help
-sudo ./build/synthetic-mouse --list-devices
-sudo ./build/synthetic-mouse --log-keys
-sudo ./build/synthetic-mouse
+sudo synthetic-mouse --list-devices
+sudo synthetic-mouse --log-keys
+sudo synthetic-mouse
 ```
 
 Command line options:
@@ -124,13 +117,6 @@ Command line options:
 - `--log-keys` prints incoming source events and passthrough events
 - `--quiet` suppresses non-critical diagnostics
 - `--help` prints usage text
-
-For an installed binary:
-
-```sh
-sudo synthetic-mouse --list-devices
-sudo synthetic-mouse
-```
 
 ## Configuration
 
@@ -142,8 +128,6 @@ Synthetic Mouse searches for `synthetic.conf` in this order:
 2. `$XDG_CONFIG_HOME/synthetic-mouse/synthetic.conf`
 3. `~/.config/synthetic-mouse/synthetic.conf`
 4. `/etc/synthetic-mouse/synthetic.conf`
-
-For local development in the repository, `./synthetic.conf` is the first match. For system installs, `/etc/synthetic-mouse/synthetic.conf` is the normal location.
 
 ### Config Format
 
