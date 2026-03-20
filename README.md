@@ -1,80 +1,57 @@
 # Synthetic Mouse
 
-Synthetic Mouse is a small C utility for Linux that turns events from a real evdev input device into synthetic mouse input.
+Synthetic Mouse maps events from a Linux input device to a virtual mouse. Common setups include a keyboard numpad used as a mouse, or a game controller used for pointer movement, buttons, and scrolling.
 
-It is intended for setups where a keyboard, controller, or other input device should act like a mouse. The program reads a selected device from `/dev/input/by-id/` through `libevdev`, translates configured source events into pointer movement, wheel input, and button clicks, and can optionally pass original events through to a cloned `uinput` device.
+The program reads a configuration file, opens one device from `/dev/input/by-id/`, creates a virtual mouse through `uinput`, and applies the selected bindings.
 
-## Description
+## Requirements
 
-Synthetic Mouse can:
-
-- map keyboard keys, controller buttons, or controller axes to mouse movement
-- map inputs to left, right, middle, back, and forward mouse buttons
-- map inputs to vertical wheel scrolling using high-resolution wheel events
-- support analog-style axis ranges such as `128..255`
-- clone the original input device and forward unhandled events to it
-- also forward handled events when a binding is marked with `!`
-- search for configuration in local, user, and system locations
-
-At runtime, Synthetic Mouse:
-
-1. opens a source evdev device from `/dev/input/by-id/`
-2. grabs that device with `LIBEVDEV_GRAB`
-3. creates a synthetic mouse through `libevdev-uinput`
-4. optionally creates a passthrough `uinput` clone of the original device
-5. parses configured bindings and translates matching input events
-6. runs a 100 Hz motion thread while movement-related actions are active
-
-Holdable actions such as `up`, `left`, or `scroll_down` drive a shared motion state. Clickable actions emit synthetic button press and release events immediately.
-
-## Build Dependencies
-
-You need:
+Build requirements:
 
 - `gcc`
 - `meson`
 - `ninja`
 - `pkg-config`
-- `libevdev` development headers and library
-
-### Installing Build Dependencies
-
-Package names vary by distribution, but the required pieces are the same:
-
-- a C compiler toolchain
-- Meson
-- Ninja
-- pkg-config
 - `libevdev` development headers
 
-#### Debian / Ubuntu
+Runtime requirements:
+
+- Linux with `evdev`
+- `uinput` available
+- permission to read the selected `/dev/input` device and create virtual input devices
+
+Typical runtime access is provided by `root`, or by suitable `udev` rules and group membership for input and `uinput`.
+
+## Installing Build Dependencies
+
+Package names vary by distribution.
+
+### Debian / Ubuntu
 
 ```sh
 sudo apt update
 sudo apt install build-essential meson ninja-build pkg-config libevdev-dev
 ```
 
-#### Fedora
+### Fedora
 
 ```sh
 sudo dnf install gcc meson ninja-build pkgconf-pkg-config libevdev-devel
 ```
 
-#### Arch Linux
+### Arch Linux
 
 ```sh
 sudo pacman -S base-devel meson ninja pkgconf libevdev
 ```
 
-#### Gentoo
+### Gentoo
 
 ```sh
 sudo emerge --ask sys-devel/gcc dev-build/meson dev-build/ninja dev-util/pkgconf dev-libs/libevdev
 ```
 
-If Meson fails to find `libevdev`, verify that the development package is installed, not just the runtime library.
-
-## Build Instructions
+## Building
 
 Debug build:
 
@@ -90,43 +67,49 @@ meson setup build --wipe --buildtype=release
 meson compile -C build
 ```
 
-Why `--wipe`?
-
-- If you already have an older `build/` directory, wiping avoids stale Meson metadata when switching build options or newly added project options.
-
-Binary output:
+The compiled binary is written to:
 
 ```text
 build/synthetic-mouse
 ```
 
-## Runtime Instructions
+## Installing
 
-Runtime requirements:
+Basic install:
 
-- Linux `evdev`
-- `uinput`
-- permission to open the chosen source device and create virtual input devices
-
-On many distributions that means:
-
-- running as `root`, or
-- running with the right `input`/`uinput` group membership and udev rules
-
-### Command Line Usage
-
-```text
-synthetic-mouse [options]
+```sh
+meson setup build --wipe --buildtype=release
+meson compile -C build
+sudo meson install -C build
 ```
 
-Available options:
+Optional install payloads:
 
-- `--list-devices` list visible `/dev/input/by-id/` devices and exit
-- `--log-keys` print source events and passthrough events
-- `--quiet` suppress non-critical diagnostics
-- `--help` show usage text
+- `-Dinstall_config_files=true` installs the default config and both sample configs under `/etc/synthetic-mouse/`
+- `-Dinstall_systemd_unit=true` installs the systemd unit
+- `-Dinstall_openrc_service=true` installs the OpenRC service
 
-Examples:
+Example with all optional install files:
+
+```sh
+meson setup build --wipe --buildtype=release \
+  -Dinstall_config_files=true \
+  -Dinstall_systemd_unit=true \
+  -Dinstall_openrc_service=true
+meson compile -C build
+sudo meson install -C build
+```
+
+Installed paths depend on Meson `prefix`, `bindir`, and `sysconfdir`. With the default prefix, the main paths are usually:
+
+- `/usr/local/bin/synthetic-mouse`
+- `/etc/synthetic-mouse/synthetic.conf`
+- `/etc/synthetic-mouse/synthetic_keyboard.conf.sample`
+- `/etc/synthetic-mouse/synthetic_controller.conf.sample`
+
+## Running
+
+Available commands:
 
 ```sh
 ./build/synthetic-mouse --help
@@ -135,29 +118,43 @@ sudo ./build/synthetic-mouse --log-keys
 sudo ./build/synthetic-mouse
 ```
 
-### Configuration
+Command line options:
 
-#### Config Search Order
+- `--list-devices` lists available `/dev/input/by-id/` device names and exits
+- `--log-keys` prints incoming source events and passthrough events
+- `--quiet` suppresses non-critical diagnostics
+- `--help` prints usage text
 
-The program searches for configuration in this order:
+For an installed binary:
+
+```sh
+sudo synthetic-mouse --list-devices
+sudo synthetic-mouse
+```
+
+## Configuration
+
+### Config Search Order
+
+Synthetic Mouse searches for `synthetic.conf` in this order:
 
 1. `./synthetic.conf`
 2. `$XDG_CONFIG_HOME/synthetic-mouse/synthetic.conf`
 3. `~/.config/synthetic-mouse/synthetic.conf`
 4. `/etc/synthetic-mouse/synthetic.conf`
 
-That makes local testing easy from the repo root while installed deployments can use XDG or system config locations.
+For local development in the repository, `./synthetic.conf` is the first match. For system installs, `/etc/synthetic-mouse/synthetic.conf` is the normal location.
 
-#### Config Format
+### Config Format
 
-The parser is token-based and whitespace-delimited.
+The file is whitespace-delimited.
 
 - `#` starts a comment
-- standalone `enable_passthrough` enables passthrough mode
-- key/value variables are floats
-- input bindings use evdev names
-- optional ranges are written as `release..press`
-- prefix a binding with `!` to both handle it and pass the original event through
+- one property is placed on each line
+- action bindings use libevdev event code names such as `KEY_KP8`, `BTN_TR2`, `ABS_RX`
+- axis bindings may include a range written as `release..press`
+- a binding may be prefixed with `!` to handle the event and also pass the original event through
+- `enable_passthrough` is a standalone property with no value
 
 Example:
 
@@ -177,68 +174,190 @@ left_click  BTN_TR2
 right_click BTN_TL2
 ```
 
-#### Available Variables
+### Required and Optional Properties
 
-- `acceleration`: how quickly pointer speed ramps up
-- `max_speed`: movement speed cap
-- `break_factor`: multiplier applied while `mouse_break` is active
-- `wheel`: scroll magnitude used for `REL_WHEEL_HI_RES`
+`dev_id`
 
-Default values when omitted:
+- required
+- must match one filename from `/dev/input/by-id/`
+- discoverable through `synthetic-mouse --list-devices`
 
-- `acceleration = 0.5`
-- `break_factor = 0.25`
-- `max_speed = 12`
-- `wheel = 120`
+`enable_passthrough`
 
-#### Available Actions
+- optional, but critical for keyboard-based setups
+- when enabled, Synthetic Mouse creates a cloned virtual version of the original device and forwards events into that clone
+- when disabled, handled events are consumed and the source device remains grabbed by Synthetic Mouse
 
-Holdable actions:
+Keyboard guidance:
+
+- `enable_passthrough` is effectively mandatory for a keyboard
+- without passthrough, the grabbed keyboard stops behaving like a keyboard while Synthetic Mouse is running
+- with passthrough enabled, normal typing and non-mouse bindings remain available through the cloned device
+
+Controller guidance:
+
+- `enable_passthrough` is usually undesirable for a controller
+- most controller mappings use the device only as a mouse source, so forwarding the full original controller stream often creates duplicate or unwanted gamepad input
+- passthrough should be enabled for a controller only when the original controller events are also needed by another application or desktop stack
+
+### Variables
+
+`acceleration`
+
+- controls how quickly pointer speed ramps up while a movement action remains active
+- lower values feel steadier and slower to ramp
+- higher values feel more aggressive and responsive
+
+`max_speed`
+
+- sets the movement speed cap
+- lower values give finer control
+- higher values increase top speed across the screen
+
+`break_factor`
+
+- controls the slowdown applied while `mouse_break` is held
+- smaller values produce stronger slowing
+- larger values keep more of the normal speed
+
+`wheel`
+
+- sets the magnitude used for scroll events
+- smaller values feel gentler
+- larger values feel faster and coarser
+
+Defaults used when a value is omitted:
+
+- `acceleration 0.5`
+- `max_speed 12`
+- `break_factor 0.25`
+- `wheel 120`
+
+### Available Actions
+
+Movement and hold actions:
 
 - `up`
 - `down`
 - `left`
 - `right`
 - `mouse_break`
-- `scroll_down`
 - `scroll_up`
+- `scroll_down`
 
-Clickable actions:
+Mouse button actions:
 
-- `scroll_click`
-- `right_click`
 - `left_click`
+- `right_click`
+- `scroll_click`
 - `backward`
 - `forward`
 
-#### Binding Semantics
+### Digital and Analog Bindings
 
 Digital keys and buttons:
 
 ```conf
-left_click KEY_KP0
+up          KEY_KP8
+left_click  KEY_KP0
 mouse_break ! KEY_LEFTSHIFT
 ```
 
-Axis-driven bindings:
+Axis-based bindings:
 
 ```conf
-left  ABS_RX 128..0
-right ABS_RX 128..255
+left        ABS_RX 128..0
+right       ABS_RX 128..255
+scroll_up   ABS_Y 128..0
+scroll_down ABS_Y 128..255
 ```
 
-The left side of the range is the release value. The right side is the press value.
+Range meaning:
 
-For example:
+- the left side of `release..press` is the idle or released value
+- the right side is the active or pressed value
+- `128..0` means activation grows as the axis moves from `128` toward `0`
+- `128..255` means activation grows as the axis moves from `128` toward `255`
 
-- `128..0` means stronger activation as the axis moves from `128` toward `0`
-- `128..255` means stronger activation as the axis moves from `128` toward `255`
+This is mainly useful for analog sticks and triggers.
 
-### Example Configurations
+## Choosing a Config
 
-#### Keyboard Example
+### Keyboard Setup
 
-`synthetic_keyboard.conf` maps numpad keys to mouse movement and buttons:
+Recommended starting point:
+
+- `synthetic_keyboard.conf`
+
+Typical behavior:
+
+- numpad or nearby keys control movement, clicks, and scroll
+- `enable_passthrough` should remain enabled
+- one modifier key may be marked with `!` so the original key event still passes through
+
+Key discovery workflow:
+
+1. Run `synthetic-mouse --list-devices` and copy the correct keyboard `dev_id`.
+2. Run `synthetic-mouse --log-keys`.
+3. Press the intended keys and note the printed `KEY_*` names.
+4. Place those names in the config file.
+5. Keep `enable_passthrough` enabled.
+
+### Controller Setup
+
+Recommended starting point:
+
+- `synthetic_controller.conf`
+
+Typical behavior:
+
+- one analog stick controls pointer movement
+- buttons control left and right click
+- another stick or axis controls scrolling
+- `enable_passthrough` normally stays disabled
+
+Axis discovery workflow:
+
+1. Run `synthetic-mouse --list-devices` and copy the correct controller `dev_id`.
+2. Run `synthetic-mouse --log-keys`.
+3. Move one stick or trigger at a time.
+4. Note the `ABS_*` code names and the observed resting and extreme values.
+5. Write bindings with the matching `release..press` direction.
+
+Practical examples:
+
+- centered stick resting near `128`, left edge near `0`: `ABS_RX 128..0`
+- centered stick resting near `128`, right edge near `255`: `ABS_RX 128..255`
+- trigger resting at `0`, fully pressed at `255`: `ABS_Z 0..255`
+
+## Tuning Guide
+
+For slower and more precise movement:
+
+- reduce `max_speed`
+- reduce `acceleration`
+
+For faster travel across large displays:
+
+- increase `max_speed`
+- increase `acceleration`
+
+For finer temporary control:
+
+- bind `mouse_break`
+- lower `break_factor`
+
+For gentler scrolling:
+
+- reduce `wheel`
+
+For faster scrolling:
+
+- increase `wheel`
+
+## Example Configs
+
+Keyboard example:
 
 ```conf
 dev_id   usb-SteelSeries_SteelSeries_Apex_3-event-kbd
@@ -264,9 +383,7 @@ forward       KEY_KP9
 mouse_break   ! KEY_LEFTSHIFT
 ```
 
-#### Controller Example
-
-`synthetic_controller.conf` maps a controller stick and buttons:
+Controller example:
 
 ```conf
 dev_id   usb-Sony_Computer_Entertainment_Wireless_Controller-if03-event-joystick
@@ -290,225 +407,25 @@ forward       BTN_TR
 mouse_break   BTN_WEST
 ```
 
-### Passthrough Mode
+## Services
 
-If `enable_passthrough` is present in the config, Synthetic Mouse creates a cloned virtual input device from the source device capabilities.
+Optional service files are available for systemd and OpenRC.
 
-Behavior:
-
-- unhandled source events are forwarded to the passthrough device
-- handled events are normally consumed
-- handled events prefixed with `!` are both handled and passed through
-
-Implementation detail:
-
-- passthrough event framing is preserved by buffering `EV_MSC` and flushing on `EV_SYN/SYN_REPORT`
-
-This is useful when you want one device to continue behaving like itself while also driving the synthetic mouse.
-
-## Everything Else
-
-### Installation
-
-The binary is installable by default through Meson:
-
-```sh
-meson setup build --wipe --buildtype=release
-meson compile -C build
-meson install -C build
-```
-
-#### Optional Install Payloads
-
-Meson project options:
-
-- `-Dinstall_config_files=true`
-- `-Dinstall_systemd_unit=true`
-- `-Dinstall_openrc_service=true`
-
-Full example:
-
-```sh
-meson setup build --wipe --buildtype=release \
-  -Dinstall_config_files=true \
-  -Dinstall_systemd_unit=true \
-  -Dinstall_openrc_service=true
-meson compile -C build
-meson install -C build
-```
-
-#### Installed Paths
-
-With default prefix settings, the install layout is:
-
-- binary: `/usr/local/bin/synthetic-mouse`
-- config directory: `/usr/local/etc/synthetic-mouse/`
-- systemd unit: `/usr/local/lib64/systemd/system/synthetic-mouse.service`
-- OpenRC script: `/usr/local/etc/init.d/synthetic-mouse`
-
-Installed config payloads:
-
-- `/usr/local/etc/synthetic-mouse/synthetic.conf`
-- `/usr/local/etc/synthetic-mouse/synthetic_controller.conf.sample`
-- `/usr/local/etc/synthetic-mouse/synthetic_keyboard.conf.sample`
-
-You can override these base paths with standard Meson install options such as `--prefix`, `--sysconfdir`, and `--libdir`.
-
-### Running as a Service
-
-#### systemd
-
-Install with:
+Systemd install:
 
 ```sh
 meson setup build --wipe --buildtype=release -Dinstall_systemd_unit=true
 meson compile -C build
 sudo meson install -C build
+sudo systemctl enable --now synthetic-mouse
 ```
 
-Then typically:
-
-```sh
-sudo systemctl daemon-reload
-sudo systemctl enable --now synthetic-mouse.service
-```
-
-The generated unit runs:
-
-```text
-ExecStart=/usr/local/bin/synthetic-mouse
-```
-
-Make sure the process can access the configured input device and `uinput`.
-
-#### OpenRC
-
-Install with:
+OpenRC install:
 
 ```sh
 meson setup build --wipe --buildtype=release -Dinstall_openrc_service=true
 meson compile -C build
 sudo meson install -C build
-```
-
-Then typically:
-
-```sh
 sudo rc-update add synthetic-mouse default
 sudo rc-service synthetic-mouse start
 ```
-
-The generated init script also runs `/usr/local/bin/synthetic-mouse`.
-
-### Repository Layout
-
-```text
-.
-├── src/
-│   ├── main.c
-│   ├── parse_config.c
-│   └── synthetic-mouse.h
-├── packaging/
-│   ├── openrc/
-│   │   └── synthetic-mouse.initd.in
-│   └── systemd/
-│       └── synthetic-mouse.service.in
-├── synthetic.conf
-├── synthetic_controller.conf
-├── synthetic_keyboard.conf
-├── meson.build
-└── meson_options.txt
-```
-
-Notes:
-
-- `synthetic.conf` is the local development config entrypoint used first at runtime
-- in the current repository it may be a symlink to one of the sample configs
-- `synthetic_controller.conf` and `synthetic_keyboard.conf` are example mappings
-
-### Development Notes
-
-- source files live under `src/`
-- build logic and install rules live in `meson.build`
-- optional install toggles are declared in `meson_options.txt`
-- service templates live under `packaging/`
-- holdable and clickable actions are defined centrally in `src/synthetic-mouse.h` through X-macros
-
-When adding a new bindable action:
-
-1. update the relevant X-macro set in `src/synthetic-mouse.h`
-2. update behavior in `src/main.c` if needed
-3. verify parser output in `src/parse_config.c`
-4. refresh the sample configs
-
-### Testing and Verification
-
-There is currently no automated test suite.
-
-Recommended verification flow:
-
-```sh
-meson setup build --wipe --buildtype=release
-meson compile -C build
-./build/synthetic-mouse --help
-sudo ./build/synthetic-mouse --list-devices
-sudo ./build/synthetic-mouse --log-keys
-```
-
-For install verification without touching the live system:
-
-```sh
-meson setup build --wipe --buildtype=release \
-  -Dinstall_config_files=true \
-  -Dinstall_systemd_unit=true \
-  -Dinstall_openrc_service=true
-meson install -C build --destdir /tmp/synthetic-mouse-stage
-find /tmp/synthetic-mouse-stage -type f | sort
-```
-
-### Troubleshooting
-
-#### Device Not Found
-
-If the program says the configured device was not found:
-
-- run `sudo ./build/synthetic-mouse --list-devices`
-- copy the exact `dev_id` from `/dev/input/by-id/`
-- update `synthetic.conf`
-
-#### Permission Errors
-
-If opening the source device or creating the virtual device fails:
-
-- run as `root` first to confirm it is a permissions issue
-- check access to `/dev/input/event*`
-- check that `uinput` is available and permitted on your system
-
-#### No Movement or Wrong Axis Direction
-
-- verify bindings with `--log-keys`
-- confirm the evdev names are correct
-- adjust axis ranges such as `128..0` vs `128..255`
-- tune `acceleration`, `max_speed`, `break_factor`, and `wheel`
-
-#### Config Not Being Picked Up
-
-Remember the lookup order:
-
-1. local `./synthetic.conf`
-2. XDG config location
-3. `/etc/synthetic-mouse/synthetic.conf`
-
-If local testing behaves differently from an installed service, you are probably using different config files.
-
-### Limitations
-
-- Linux-only
-- no GUI configuration tool
-- no automated tests yet
-- requires evdev and uinput access
-- the device match is based on the `/dev/input/by-id/` filename, not a more abstract device selector
-
-### License
-
-No license file is currently present in this repository. Add one before publishing if you want clear reuse terms.
