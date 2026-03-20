@@ -20,7 +20,7 @@ Runtime requirements:
 - `uinput` available
 - permission to read the selected `/dev/input` device and create virtual input devices
 
-Typical runtime access is provided by `root`, or by suitable `udev` rules and group membership for input and `uinput`.
+Typical runtime access is provided by `root`, or by suitable `udev` rules and group membership for input and `uinput`. Adding the user to the `input` might also yeild similar results.
 
 ## Installing Build Dependencies
 
@@ -43,12 +43,6 @@ sudo dnf install gcc meson ninja-build pkgconf-pkg-config libevdev-devel
 
 ```sh
 sudo pacman -S base-devel meson ninja pkgconf libevdev
-```
-
-### Gentoo
-
-```sh
-sudo emerge --ask sys-devel/gcc dev-build/meson dev-build/ninja dev-util/pkgconf dev-libs/libevdev
 ```
 
 ## Building
@@ -414,5 +408,3 @@ sudo meson install -C build
 sudo rc-update add synthetic-mouse default
 sudo rc-service synthetic-mouse start
 ```
-
-If `meson setup build --wipe` still shows these as user-defined `true`, the existing `build` directory already has saved option values. Remove the build directory or pass explicit `-D...=false` flags to reset them.
