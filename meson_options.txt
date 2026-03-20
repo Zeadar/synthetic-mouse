@@ -1,0 +1,20 @@
+option(
+    'install_config_files',
+    type: 'boolean',
+    value: false,
+    description: 'Install the default and sample configuration files under sysconfdir.',
+)
+
+option(
+    'install_systemd_unit',
+    type: 'boolean',
+    value: false,
+    description: 'Install the systemd service unit.',
+)
+
+option(
+    'install_openrc_service',
+    type: 'boolean',
+    value: false,
+    description: 'Install the OpenRC init script.',
+)

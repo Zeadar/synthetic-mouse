@@ -1,0 +1,13 @@
+[Unit]
+Description=Synthetic Mouse input remapper
+After=local-fs.target systemd-udevd.service
+Wants=systemd-udevd.service
+
+[Service]
+Type=simple
+ExecStart=@binary_path@
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

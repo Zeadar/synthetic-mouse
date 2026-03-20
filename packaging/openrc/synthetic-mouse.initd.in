@@ -1,0 +1,12 @@
+#!/sbin/openrc-run
+
+name="synthetic-mouse"
+description="Synthetic Mouse input remapper"
+command="@binary_path@"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+
+depend() {
+    need localmount
+    after udev
+}
