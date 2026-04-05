@@ -262,7 +262,7 @@ static void flush_passthrough_frame(int pass_logging) {
             printf(F_LOG "\n", "passthrough",
                    libevdev_event_type_get_name(ev->type),
                    libevdev_event_code_get_name(ev->type, ev->code), ev->value);
-        _write_event(synthetic_passthrough, ev->type, ev->code, ev->value);
+        libevdev_uinput_write_event(synthetic_passthrough, ev->type, ev->code, ev->value);
     }
 
     passthrough_frame_len = 0;
