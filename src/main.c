@@ -393,18 +393,27 @@ int main(int argc, char **argv) {
             get_device_by_id("", 1);
             exit(0);
         }
-        if (strcmp(argv[i], "--log-input") == 0)
-            is_input_log = 1;
-        if (strcmp(argv[i], "--log-output") == 0)
-            is_output_log = 1;
-        if (strcmp(argv[i], "--log-pass") == 0)
-            is_pass_log = 1;
-        if (strcmp(argv[i], "--quiet") == 0)
-            is_quiet = 1;
         if (strcmp(argv[i], "--help") == 0) {
             printf(HELP "\n");
             exit(0);
         }
+        if (strcmp(argv[i], "--log-input") == 0) {
+            is_input_log = 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--log-output") == 0) {
+            is_output_log = 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--log-pass") == 0){
+            is_pass_log = 1;
+            continue;
+        }
+        if (strcmp(argv[i], "--quiet") == 0) {
+            is_quiet = 1;
+            continue;
+        }
+        fprintf(stderr, "Unrecognized: %s\n", argv[i]);
     }
 
     conf_data = parse_config();
