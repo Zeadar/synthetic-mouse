@@ -262,7 +262,8 @@ static void flush_passthrough_frame(int pass_logging) {
             printf(F_LOG "\n", "passthrough",
                    libevdev_event_type_get_name(ev->type),
                    libevdev_event_code_get_name(ev->type, ev->code), ev->value);
-        libevdev_uinput_write_event(synthetic_passthrough, ev->type, ev->code, ev->value);
+        libevdev_uinput_write_event(synthetic_passthrough, ev->type, ev->code,
+                                    ev->value);
     }
 
     passthrough_frame_len = 0;
@@ -273,6 +274,7 @@ void *mouse_handler() {
     struct v2 velocity = {0};
     float max = conf_data.vars[VAR_ID_MAX_SPEED];
     float speed = 0;
+    float mb = 0;
     int cycles = 0;
     int is_x = 0;
     int is_y = 0;
@@ -336,21 +338,20 @@ void *mouse_handler() {
             _write_event(synthetic_mouse, EV_REL, REL_Y,
                          (int) roundf(velocity.y));
 
+        mb = motion_state[HOLDABLE_ID_MOUSE_BREAK]
+                 ? conf_data.vars[VAR_ID_BREAK_FACTOR]
+                 : 1;
+
         if ((is_s = motion_state[HOLDABLE_ID_SCROLL_UP])) {
-            float mb = motion_state[HOLDABLE_ID_MOUSE_BREAK]
-                           ? conf_data.vars[VAR_ID_BREAK_FACTOR]
-                           : 1;
             _write_event(synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
                          (int) roundf(conf_data.vars[VAR_ID_WHEEL] *
                                       motion_state[HOLDABLE_ID_SCROLL_UP] *
                                       mb));
         } else if ((is_s = motion_state[HOLDABLE_ID_SCROLL_DOWN])) {
-            float mb = motion_state[HOLDABLE_ID_MOUSE_BREAK]
-                           ? conf_data.vars[VAR_ID_BREAK_FACTOR]
-                           : 1;
             _write_event(synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
-                         -(int) roundf(conf_data.vars[VAR_ID_WHEEL]) *
-                             motion_state[HOLDABLE_ID_SCROLL_DOWN] * mb);
+                         -(int) roundf(conf_data.vars[VAR_ID_WHEEL] *
+                                       motion_state[HOLDABLE_ID_SCROLL_DOWN] *
+                                       mb));
         }
 
         if (is_x || is_y || is_s)
