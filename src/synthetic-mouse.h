@@ -20,8 +20,8 @@ enum HOLDABLE_ID {
     DO_X(SCROLL_CLICK, scroll_click, BTN_MIDDLE)                               \
     DO_X(RIGHT_CLICK, right_click, BTN_RIGHT)                                  \
     DO_X(LEFT_CLICK, left_click, BTN_LEFT)                                     \
-    DO_X(BACKWARD, backward, BTN_BACK)                                         \
-    DO_X(FORWARD, forward, BTN_FORWARD)
+    DO_X(BACKWARD, backward, BTN_SIDE)                                         \
+    DO_X(FORWARD, forward, BTN_EXTRA)
 
 enum CLICKABLE_ID {
 #define GENERATE_CLICKABLE_ID(KEY_NAME_UPPER, _, __)                           \
@@ -56,6 +56,15 @@ enum VAR_ID {
         VAR_ID_COUNT
 };
 
+#define X_FOR_EACH_FUNC(DO_X) DO_X(ENABLE_TOGGLE, enable_toggle)
+
+enum FUNC_ID {
+#define GENERATE_FUNC_ID(FUNC_NAME_UPPER, _) FUNC_ID##FUNC_NAME_UPPER,
+    X_FOR_EACH_FUNC(GENERATE_FUNC_ID)
+#undef GENERATE_FUNC_ID
+    FUNC_ID_COUNT
+};
+
 struct key {
     int ev_code;
     int ev_type;
@@ -66,6 +75,7 @@ struct key {
 
 struct conf_data {
     struct key keys[KEY_ID_COUNT];
+    struct key func_keys[FUNC_ID_COUNT];
     float vars[VAR_ID_COUNT];
     int enable_passthrough;
     char *dev_id;
