@@ -17,22 +17,25 @@
 #include <unistd.h>
 
 #define EVENTPATH "/dev/input/by-id/"
+#define F_LOG "%-18sType: %-18sCode: %-18sValue: %d"
 
 #define PASSTHROUGH_FRAME_MAX 32
 #define SYNTH_PASSTHROUGH_NAME "Synthetic Passthrough"
 #define SYNTH_MOUSE_NAME "Synthetic Mouse"
-#define HELP                                                                \
-    "Usage: synthetic-mouse [options]\n"                                    \
-    "\n"                                                                    \
-    "Reads configuration from ./synthetic.conf, "                           \
-    "$XDG_CONFIG_HOME/synthetic-mouse/\n"                                   \
-    "synthetic.conf, or /etc/synthetic-mouse/synthetic.conf,\n"             \
-    "opens the configured input device, and emits synthetic mouse events.\n" \
-    "\n"                                                                    \
-    "Options:\n"                                                            \
-    "  --list-devices  List /dev/input/by-id devices and exit.\n"           \
-    "  --log-keys      Print source events and passthrough events.\n"       \
-    "  --quiet         Suppress non-critical diagnostics.\n"                \
+#define HELP                                                                   \
+    "Usage: synthetic-mouse [options]\n"                                       \
+    "\n"                                                                       \
+    "Reads configuration from ./synthetic.conf, "                              \
+    "$XDG_CONFIG_HOME/synthetic-mouse/\n"                                      \
+    "synthetic.conf, or /etc/synthetic-mouse/synthetic.conf,\n"                \
+    "opens the configured input device, and emits synthetic mouse events.\n"   \
+    "\n"                                                                       \
+    "Options:\n"                                                               \
+    "  --list-devices  List /dev/input/by-id devices and exit.\n"              \
+    "  --log-input     Print source input events.\n"                           \
+    "  --log-output    Print synthetic output events.\n"                       \
+    "  --log-pass      Print passthrough output events.\n"                     \
+    "  --quiet         Suppress non-critical diagnostics.\n"                   \
     "  --help          Show this help text.\n"
 
 struct v2 {
@@ -58,7 +61,9 @@ size_t passthrough_pending_len = 0;
 pthread_mutex_t motion_lock;
 pthread_t thread_id;
 volatile sig_atomic_t thread_running = 0;
-int quiet = 0;
+int is_quiet = 0;
+int is_disabled = 0;
+int is_output_log = 0;
 
 struct v2 v2_normalize(const struct v2 v) {
     const float len = sqrtf(v.x * v.x + v.y * v.y);
@@ -75,6 +80,16 @@ struct v2 v2_scale(const struct v2 v, const float s) {
         .x = v.x * s,
         .y = v.y * s,
     };
+}
+
+// I hate this solution
+int _write_event(const struct libevdev_uinput *uinput_dev, unsigned int type,
+                 unsigned int code, int value) {
+    if (is_output_log)
+        printf(F_LOG "\n", "output", libevdev_event_type_get_name(type),
+               libevdev_event_code_get_name(type, code), value);
+
+    return libevdev_uinput_write_event(uinput_dev, type, code, value);
 }
 
 static void inherit_device_caps(struct libevdev *dst,
@@ -199,22 +214,13 @@ void log_event(struct input_event *ev) {
     if (ev->type == EV_MSC)
         return;
 
-    // if (strcmp("ABS_X", libevdev_event_code_get_name(ev->type, ev->code)) !=
-    // 0)
-    //     return;
-
-    // if (strcmp("ABS_Y", libevdev_event_code_get_name(ev->type, ev->code)) !=
-    // 0)
-    //     return;
-
-    printf("Type: %-7sCode: %-16sValue: %d\n",
-           libevdev_event_type_get_name(ev->type),
+    printf(F_LOG "\n", "input", libevdev_event_type_get_name(ev->type),
            libevdev_event_code_get_name(ev->type, ev->code), ev->value);
 }
 
 static void queue_passthrough_event(const struct input_event *ev) {
     if (passthrough_frame_len == PASSTHROUGH_FRAME_MAX) {
-        if (!quiet)
+        if (!is_quiet)
             fprintf(stderr,
                     "Passthrough frame overflow, dropping event %s %s\n",
                     libevdev_event_type_get_name(ev->type),
@@ -227,7 +233,7 @@ static void queue_passthrough_event(const struct input_event *ev) {
 
 static void queue_passthrough_pending(const struct input_event *ev) {
     if (passthrough_pending_len == PASSTHROUGH_FRAME_MAX) {
-        if (!quiet)
+        if (!is_quiet)
             fprintf(stderr,
                     "Passthrough pending overflow, dropping event %s %s\n",
                     libevdev_event_type_get_name(ev->type),
@@ -249,15 +255,14 @@ static void clear_passthrough_pending(void) {
     passthrough_pending_len = 0;
 }
 
-static void flush_passthrough_frame(int key_logging) {
+static void flush_passthrough_frame(int pass_logging) {
     for (size_t i = 0; i < passthrough_frame_len; ++i) {
         struct input_event *ev = &passthrough_frame[i];
-        if (key_logging)
-            printf("passthrough: %s %s %d\n",
+        if (pass_logging)
+            printf(F_LOG "\n", "passthrough",
                    libevdev_event_type_get_name(ev->type),
                    libevdev_event_code_get_name(ev->type, ev->code), ev->value);
-        libevdev_uinput_write_event(synthetic_passthrough, ev->type, ev->code,
-                                    ev->value);
+        _write_event(synthetic_passthrough, ev->type, ev->code, ev->value);
     }
 
     passthrough_frame_len = 0;
@@ -265,9 +270,13 @@ static void flush_passthrough_frame(int key_logging) {
 
 void *mouse_handler() {
     struct v2 input_direction = {0};
+    struct v2 velocity = {0};
     float max = conf_data.vars[VAR_ID_MAX_SPEED];
     float speed = 0;
     int cycles = 0;
+    int is_x = 0;
+    int is_y = 0;
+    int is_s = 0;
 
     const long frame_ns = 1000000000L / 100;
     struct timespec next_tick;
@@ -287,16 +296,16 @@ void *mouse_handler() {
             cycles = 0;
         }
 
-        if (motion_state[HOLDABLE_ID_UP])
+        if ((is_y = motion_state[HOLDABLE_ID_UP]))
             input_direction.y = -1 * motion_state[HOLDABLE_ID_UP];
-        else if (motion_state[HOLDABLE_ID_DOWN])
+        else if ((is_y = motion_state[HOLDABLE_ID_DOWN]))
             input_direction.y = 1 * motion_state[HOLDABLE_ID_DOWN];
         else {
             input_direction.y = 0;
         }
-        if (motion_state[HOLDABLE_ID_LEFT])
+        if ((is_x = motion_state[HOLDABLE_ID_LEFT]))
             input_direction.x = -1 * motion_state[HOLDABLE_ID_LEFT];
-        else if (motion_state[HOLDABLE_ID_RIGHT])
+        else if ((is_x = motion_state[HOLDABLE_ID_RIGHT]))
             input_direction.x = 1 * motion_state[HOLDABLE_ID_RIGHT];
         else {
             input_direction.x = 0;
@@ -309,40 +318,43 @@ void *mouse_handler() {
             max = conf_data.vars[VAR_ID_MAX_SPEED];
         }
 
-        if (motion_state[HOLDABLE_ID_UP] || motion_state[HOLDABLE_ID_DOWN] ||
-            motion_state[HOLDABLE_ID_LEFT] || motion_state[HOLDABLE_ID_RIGHT]) {
+        if (is_x || is_y) {
             speed += conf_data.vars[VAR_ID_ACCELERATION];
             speed = speed > max ? max : speed;
+            velocity = v2_scale(v2_normalize(input_direction), speed);
+            velocity.x *= fabsf(input_direction.x);
+            velocity.y *= fabsf(input_direction.y);
         } else {
             speed = 0;
         }
 
-        // printf("input direction x=%9f, y=%9f\n", input_direction.x,
-        //        input_direction.y);
-        struct v2 velocity = v2_scale(v2_normalize(input_direction), speed);
-        velocity.x *= fabsf(input_direction.x);
-        velocity.y *= fabsf(input_direction.y);
+        if (is_x)
+            _write_event(synthetic_mouse, EV_REL, REL_X,
+                         (int) roundf(velocity.x));
 
-        if (memcmp(&motion_state, &(const float[HOLDABLE_ID_COUNT]) {0},
-                   sizeof motion_state) != 0) {
-            libevdev_uinput_write_event(synthetic_mouse, EV_REL, REL_X,
-                                        (int) roundf(velocity.x));
-            libevdev_uinput_write_event(synthetic_mouse, EV_REL, REL_Y,
-                                        (int) roundf(velocity.y));
+        if (is_y)
+            _write_event(synthetic_mouse, EV_REL, REL_Y,
+                         (int) roundf(velocity.y));
 
+        if ((is_s = motion_state[HOLDABLE_ID_SCROLL_UP])) {
             float mb = motion_state[HOLDABLE_ID_MOUSE_BREAK]
                            ? conf_data.vars[VAR_ID_BREAK_FACTOR]
                            : 1;
-            libevdev_uinput_write_event(
-                synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
-                (int) roundf(conf_data.vars[VAR_ID_WHEEL] *
-                             motion_state[HOLDABLE_ID_SCROLL_UP] * mb));
-            libevdev_uinput_write_event(
-                synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
-                -(int) roundf(conf_data.vars[VAR_ID_WHEEL]) *
-                    motion_state[HOLDABLE_ID_SCROLL_DOWN] * mb);
-            libevdev_uinput_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
+            _write_event(synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
+                         (int) roundf(conf_data.vars[VAR_ID_WHEEL] *
+                                      motion_state[HOLDABLE_ID_SCROLL_UP] *
+                                      mb));
+        } else if ((is_s = motion_state[HOLDABLE_ID_SCROLL_DOWN])) {
+            float mb = motion_state[HOLDABLE_ID_MOUSE_BREAK]
+                           ? conf_data.vars[VAR_ID_BREAK_FACTOR]
+                           : 1;
+            _write_event(synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
+                         -(int) roundf(conf_data.vars[VAR_ID_WHEEL]) *
+                             motion_state[HOLDABLE_ID_SCROLL_DOWN] * mb);
         }
+
+        if (is_x || is_y || is_s)
+            _write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
 
         pthread_mutex_unlock(&motion_lock);
 
@@ -370,7 +382,8 @@ int main(int argc, char **argv) {
     sa.sa_flags = 0;
     sigaction(SIGINT, &sa, 0);
     sigaction(SIGTERM, &sa, 0);
-    int key_logging = 0;
+    int is_input_log = 0;
+    int is_pass_log = 0;
 
     pthread_mutex_init(&motion_lock, 0);
 
@@ -379,12 +392,16 @@ int main(int argc, char **argv) {
             get_device_by_id("", 1);
             exit(0);
         }
-        if (strcmp(argv[i], "--log-keys") == 0)
-            key_logging = 1;
+        if (strcmp(argv[i], "--log-input") == 0)
+            is_input_log = 1;
+        if (strcmp(argv[i], "--log-output") == 0)
+            is_output_log = 1;
+        if (strcmp(argv[i], "--log-pass") == 0)
+            is_pass_log = 1;
         if (strcmp(argv[i], "--quiet") == 0)
-            quiet = 1;
-        if (strcmp(argv[i], "--help") == 0){
-            printf(HELP"\n");
+            is_quiet = 1;
+        if (strcmp(argv[i], "--help") == 0) {
+            printf(HELP "\n");
             exit(0);
         }
     }
@@ -451,7 +468,7 @@ int main(int argc, char **argv) {
         int is_matched = 0;
         int should_passthrough = 0;
 
-        if (key_logging)
+        if (is_input_log)
             log_event(&ev);
 
         if (conf_data.enable_passthrough && ev.type == EV_MSC) {
@@ -469,7 +486,7 @@ int main(int argc, char **argv) {
                 }
             } else if (passthrough_frame_len != 0) {
                 queue_passthrough_event(&ev);
-                flush_passthrough_frame(key_logging);
+                flush_passthrough_frame(is_pass_log);
             } else {
                 clear_passthrough_pending();
             }
@@ -538,10 +555,9 @@ int main(int argc, char **argv) {
             }
 
             const int click_id = key_id - HOLDABLE_ID_COUNT;
-            libevdev_uinput_write_event(
-                synthetic_mouse, EV_KEY, click_action[click_id],
-                ev.value == conf_data.keys[key_id].press);
-            libevdev_uinput_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
+            _write_event(synthetic_mouse, EV_KEY, click_action[click_id],
+                         ev.value == conf_data.keys[key_id].press);
+            _write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
 
             is_matched = 1;
             if (conf_data.keys[key_id].is_pass)
