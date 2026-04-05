@@ -20,7 +20,12 @@ Runtime requirements:
 - `uinput` available
 - permission to read the selected `/dev/input` device and create virtual input devices
 
-Typical runtime access is provided by `root`, or by suitable `udev` rules and group membership for input and `uinput`. Adding the user to the `input` might also yeild similar results.
+Typical runtime access is provided by `root`, or by suitable `udev` rules and group membership for input and `uinput`.
+
+### Adding user to input group
+```sh
+sudo usermod -aG input [username]
+```
 
 ## Installing Build Dependencies
 
