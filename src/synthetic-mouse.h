@@ -74,7 +74,8 @@ struct key {
 };
 
 struct conf_data {
-    struct key keys[KEY_ID_COUNT];
+    struct key hold_keys[HOLDABLE_ID_COUNT];
+    struct key click_keys[CLICKABLE_ID_COUNT];
     struct key func_keys[FUNC_ID_COUNT];
     float vars[VAR_ID_COUNT];
     int enable_passthrough;

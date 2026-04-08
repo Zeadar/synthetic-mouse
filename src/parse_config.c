@@ -133,6 +133,13 @@ const char *key_repr(struct key *key) {
     return libevdev_event_code_get_name(key->ev_type, key->ev_code);
 }
 
+static struct key *conf_key_slot(struct conf_data *data, enum KEY_ID key_id) {
+    if (key_id < KEY_ID_SCROLL_CLICK)
+        return &data->hold_keys[key_id];
+
+    return &data->click_keys[key_id - HOLDABLE_ID_COUNT];
+}
+
 static FILE *open_config_file(char *resolved_path, size_t resolved_path_size) {
     const char *xdg_config_home = getenv("XDG_CONFIG_HOME");
     const char *home = getenv("HOME");
@@ -182,6 +189,7 @@ struct conf_data parse_config() {
     enum KEY_ID key_id = KEY_ID_COUNT;
     enum VAR_ID var_id = VAR_ID_COUNT;
     char *endptr; // for strtof()
+    struct key *key = 0;
 
     // sane defaults
     data.vars[VAR_ID_WHEEL] = 120;
@@ -227,8 +235,10 @@ struct conf_data parse_config() {
         case FUNC_KEY:
             break;
         case KEY_VALUE:
+            key = conf_key_slot(&data, key_id);
+
             if (buf[0] == PASSTHROUGH) {
-                data.keys[key_id].is_pass = -1;
+                key->is_pass = -1;
                 if (buf[1] == '\0') {
                     mode = WHITESPACE;
                     next_mode = KEY_VALUE;
@@ -237,16 +247,16 @@ struct conf_data parse_config() {
                 buf++;
             }
 
-            data.keys[key_id].ev_code = libevdev_event_code_from_code_name(buf);
-            // if (data.keys[key_id].ev_code == -1) {
+            key->ev_code = libevdev_event_code_from_code_name(buf);
+            // if (key->ev_code == -1) {
             //     fprintf(stderr, "Unknown key code name: %s\n", buf);
             //     exit(5);
             // }
 
-            data.keys[key_id].press = 1;
-            data.keys[key_id].release = 0;
+            key->press = 1;
+            key->release = 0;
 
-            data.keys[key_id].ev_type = libevdev_event_type_from_code_name(buf);
+            key->ev_type = libevdev_event_type_from_code_name(buf);
 
             mode = WHITESPACE;
             next_mode = RANGE;
@@ -271,8 +281,8 @@ struct conf_data parse_config() {
             next_mode = PROPERTY;
             break;
         case RANGE:
-            if (is_range(buf, &data.keys[key_id].release,
-                         &data.keys[key_id].press)) {
+            key = conf_key_slot(&data, key_id);
+            if (is_range(buf, &key->release, &key->press)) {
                 mode = WHITESPACE;
                 next_mode = PROPERTY;
             } else {
@@ -322,10 +332,11 @@ struct conf_data parse_config() {
            "------------------------", "------", "------", "--------",
            "------");
     for (int key_id = 0; key_id < KEY_ID_COUNT; key_id++) {
+        struct key *summary_key = conf_key_slot(&data, key_id);
         printf("  %-12s %-24s %6d %6s %8d %6d\n", key_names[key_id],
-               key_repr(&data.keys[key_id]), data.keys[key_id].ev_code,
-               data.keys[key_id].is_pass ? "yes" : "no",
-               data.keys[key_id].release, data.keys[key_id].press);
+               key_repr(summary_key), summary_key->ev_code,
+               summary_key->is_pass ? "yes" : "no", summary_key->release,
+               summary_key->press);
     }
 
     // TODO: Rather than checking if `data.vars` is filled, set sane defaults

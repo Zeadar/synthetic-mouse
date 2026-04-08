@@ -505,17 +505,18 @@ int main(int argc, char **argv) {
         }
 
         for (int key_id = 0; key_id < HOLDABLE_ID_COUNT; key_id++) {
-            if (!(ev.code == conf_data.keys[key_id].ev_code &&
-                  ev.type == conf_data.keys[key_id].ev_type))
+            struct key *key = &conf_data.hold_keys[key_id];
+
+            if (!(ev.code == key->ev_code && ev.type == key->ev_type))
                 continue;
 
             const float val = ev.value;
-            const float pre = conf_data.keys[key_id].press;
-            const float rel = conf_data.keys[key_id].release;
+            const float pre = key->press;
+            const float rel = key->release;
 
             float strength = (val - rel) * (1 / (pre - rel));
 
-            if (conf_data.keys[key_id].ev_type == EV_KEY) {
+            if (key->ev_type == EV_KEY) {
                 if (strength > 1 || strength < 0) {
                     is_matched = 1;
                     continue;
@@ -534,7 +535,7 @@ int main(int argc, char **argv) {
             pthread_mutex_unlock(&motion_lock);
 
             is_matched = 1;
-            if (conf_data.keys[key_id].is_pass)
+            if (key->is_pass)
                 should_passthrough = 1;
             else
                 break;
@@ -545,33 +546,31 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        for (int key_id = HOLDABLE_ID_COUNT; key_id != KEY_ID_COUNT; ++key_id) {
-            if (!(ev.code == conf_data.keys[key_id].ev_code &&
-                  ev.type == conf_data.keys[key_id].ev_type))
+        for (int key_id = 0; key_id < CLICKABLE_ID_COUNT; ++key_id) {
+            struct key *key = &conf_data.click_keys[key_id];
+
+            if (!(ev.code == key->ev_code && ev.type == key->ev_type))
                 continue;
 
-            if (conf_data.keys[key_id].ev_code == 0 &&
-                conf_data.keys[key_id].ev_type == 0)
+            if (key->ev_code == 0 && key->ev_type == 0)
                 continue;
 
             const float val = ev.value;
-            const float pre = conf_data.keys[key_id].press;
-            const float rel = conf_data.keys[key_id].release;
+            const float pre = key->press;
+            const float rel = key->release;
             float strength = (val - rel) * (1 / (pre - rel));
 
-            if (conf_data.keys[key_id].ev_type == EV_KEY &&
-                (strength > 1 || strength < 0)) {
+            if (key->ev_type == EV_KEY && (strength > 1 || strength < 0)) {
                 is_matched = 1;
                 continue;
             }
 
-            const int click_id = key_id - HOLDABLE_ID_COUNT;
-            log_write_event(synthetic_mouse, EV_KEY, click_action[click_id],
-                         ev.value == conf_data.keys[key_id].press);
+            log_write_event(synthetic_mouse, EV_KEY, click_action[key_id],
+                         ev.value == key->press);
             log_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
 
             is_matched = 1;
-            if (conf_data.keys[key_id].is_pass)
+            if (key->is_pass)
                 should_passthrough = 1;
             else
                 break;
