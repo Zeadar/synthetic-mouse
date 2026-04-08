@@ -32,9 +32,9 @@ Binary output: `build/synthetic-mouse`
 
 ## Run
 Requires access to input devices and uinput (typically root or input group).
-- List devices: `sudo ./build/synthetic-mouse --list-devices`
-- Run: `sudo ./build/synthetic-mouse`
-- Log key events: `sudo ./build/synthetic-mouse --log-keys`
+- List devices: `./build/synthetic-mouse --list-devices`
+- Run: `./build/synthetic-mouse`
+- Log key events: `./build/synthetic-mouse --log-keys`
 - Show usage/config search paths: `./build/synthetic-mouse --help`
 
 ## Configuration

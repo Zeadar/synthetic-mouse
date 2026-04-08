@@ -83,7 +83,7 @@ struct v2 v2_scale(const struct v2 v, const float s) {
 }
 
 // I hate this solution
-int _write_event(const struct libevdev_uinput *uinput_dev, unsigned int type,
+int log_write_event(const struct libevdev_uinput *uinput_dev, unsigned int type,
                  unsigned int code, int value) {
     if (is_output_log)
         printf(F_LOG "\n", "output", libevdev_event_type_get_name(type),
@@ -95,7 +95,7 @@ int _write_event(const struct libevdev_uinput *uinput_dev, unsigned int type,
 static void inherit_device_caps(struct libevdev *dst,
                                 const struct libevdev *src) {
     // Copy basic identity so the uinput clone looks like the source device.
-    // libevdev_set_id_bustype(dst, libevdev_get_id_bustype(src));
+    libevdev_set_id_bustype(dst, libevdev_get_id_bustype(src));
     libevdev_set_id_vendor(dst, libevdev_get_id_vendor(src));
     libevdev_set_id_product(dst, libevdev_get_id_product(src));
     libevdev_set_id_version(dst, libevdev_get_id_version(src));
@@ -136,7 +136,8 @@ static void inherit_device_caps(struct libevdev *dst,
 }
 
 void exit_handler(int sig) {
-    printf("\nRecieved sig %d, exiting...\n", sig);
+    if (!is_quiet)
+        printf("\nRecieved sig %d, exiting...\n", sig);
     if (thread_running) {
         pthread_mutex_lock(&motion_lock);
         pthread_cancel(thread_id);
@@ -331,11 +332,11 @@ void *mouse_handler() {
         }
 
         if (is_x)
-            _write_event(synthetic_mouse, EV_REL, REL_X,
+            log_write_event(synthetic_mouse, EV_REL, REL_X,
                          (int) roundf(velocity.x));
 
         if (is_y)
-            _write_event(synthetic_mouse, EV_REL, REL_Y,
+            log_write_event(synthetic_mouse, EV_REL, REL_Y,
                          (int) roundf(velocity.y));
 
         mb = motion_state[HOLDABLE_ID_MOUSE_BREAK]
@@ -343,19 +344,19 @@ void *mouse_handler() {
                  : 1;
 
         if ((is_s = motion_state[HOLDABLE_ID_SCROLL_UP])) {
-            _write_event(synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
+            log_write_event(synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
                          (int) roundf(conf_data.vars[VAR_ID_WHEEL] *
                                       motion_state[HOLDABLE_ID_SCROLL_UP] *
                                       mb));
         } else if ((is_s = motion_state[HOLDABLE_ID_SCROLL_DOWN])) {
-            _write_event(synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
+            log_write_event(synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
                          -(int) roundf(conf_data.vars[VAR_ID_WHEEL] *
                                        motion_state[HOLDABLE_ID_SCROLL_DOWN] *
                                        mb));
         }
 
         if (is_x || is_y || is_s)
-            _write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
+            log_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
 
         pthread_mutex_unlock(&motion_lock);
 
@@ -386,8 +387,6 @@ int main(int argc, char **argv) {
     int is_input_log = 0;
     int is_pass_log = 0;
 
-    pthread_mutex_init(&motion_lock, 0);
-
     for (int i = 1; i != argc; ++i) {
         if (strcmp(argv[i], "--list-devices") == 0) {
             get_device_by_id("", 1);
@@ -415,6 +414,8 @@ int main(int argc, char **argv) {
         }
         fprintf(stderr, "Unrecognized: %s\n", argv[i]);
     }
+
+    pthread_mutex_init(&motion_lock, 0);
 
     conf_data = parse_config();
 
@@ -565,9 +566,9 @@ int main(int argc, char **argv) {
             }
 
             const int click_id = key_id - HOLDABLE_ID_COUNT;
-            _write_event(synthetic_mouse, EV_KEY, click_action[click_id],
+            log_write_event(synthetic_mouse, EV_KEY, click_action[click_id],
                          ev.value == conf_data.keys[key_id].press);
-            _write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
+            log_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
 
             is_matched = 1;
             if (conf_data.keys[key_id].is_pass)

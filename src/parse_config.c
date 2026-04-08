@@ -15,7 +15,7 @@
 #define SYSTEM_CONF_NAME "/etc/synthetic-mouse/synthetic.conf"
 #define ENABLE_PASSTHROUGH "enable_passthrough"
 
-extern int quiet; // main.c
+extern int is_quiet; // main.c
 
 enum READMODE {
     PROPERTY,
@@ -23,6 +23,7 @@ enum READMODE {
     VAR_VALUE,
     DEV_VALUE,
     RANGE,
+    FUNC_KEY,
     SKIPLINE,
     WHITESPACE,
     READ,
@@ -38,6 +39,12 @@ static const char *var_names[VAR_ID_COUNT] = {
 #define GENERATE_VAR_NAME(_, VAR_NAME_LOWER) #VAR_NAME_LOWER,
     X_FOR_EACH_VAR(GENERATE_VAR_NAME)
 #undef GENERATE_VAR_NAME
+};
+
+static const char *func_names[FUNC_ID_COUNT] = {
+    #define GENERATE_FUNC_NAME(_, FUNC_NAME_LOWER) #FUNC_NAME_LOWER,
+        X_FOR_EACH_FUNC(GENERATE_FUNC_NAME)
+    #undef GENERATE_FUNC_NAME
 };
 
 #define STARTSIZE 16
@@ -181,6 +188,7 @@ struct conf_data parse_config() {
     data.vars[VAR_ID_ACCELERATION] = 0.5;
     data.vars[VAR_ID_BREAK_FACTOR] = 0.25;
     data.vars[VAR_ID_MAX_SPEED] = 12;
+    data.enable_passthrough = 1;
 
     while ((c = getc(conf_file)) != EOF) {
         if (c == '#')
@@ -214,6 +222,9 @@ struct conf_data parse_config() {
 
             fprintf(stderr, "Could not parse property: %s\n", buf);
             exit(5);
+            break;
+
+        case FUNC_KEY:
             break;
         case KEY_VALUE:
             if (buf[0] == PASSTHROUGH) {
@@ -296,13 +307,13 @@ struct conf_data parse_config() {
 
     fclose(conf_file);
 
-    if (quiet)
+    if (is_quiet)
         return data;
 
     printf("\nConfig\n");
     printf("  dev_id: %s\n", data.dev_id ? data.dev_id : "");
-    if (data.enable_passthrough)
-        printf("\nPassthrough enabled!\n");
+    if (!data.enable_passthrough)
+        printf("\nPassthrough disabled!\n");
 
     printf("\nKey bindings\n");
     printf("  %-12s %-24s %6s %6s %8s %6s\n", "action", "evdev", "code", "pass",
