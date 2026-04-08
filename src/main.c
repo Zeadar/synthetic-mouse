@@ -518,14 +518,14 @@ int main(int argc, char **argv) {
 
             if (key->press == ev.value) {
                 is_matched = 1;
-                if (key->is_pass)
-                    should_passthrough = 1;
-                else
-                    break;
 
                 if (key_id == FUNC_ID_TOGGLE_DISABLE)
                     is_force_passthrough = !is_force_passthrough;
 
+                if (key->is_pass)
+                    should_passthrough = 1;
+                else
+                    break;
             }
         }
 
