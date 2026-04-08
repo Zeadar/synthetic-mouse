@@ -1,3 +1,10 @@
+#define X_FOR_EACH_CLICKABLE(DO_X)                                             \
+    DO_X(SCROLL_CLICK, scroll_click, BTN_MIDDLE)                               \
+    DO_X(RIGHT_CLICK, right_click, BTN_RIGHT)                                  \
+    DO_X(LEFT_CLICK, left_click, BTN_LEFT)                                     \
+    DO_X(BACKWARD, backward, BTN_SIDE)                                         \
+    DO_X(FORWARD, forward, BTN_EXTRA)
+
 #define X_FOR_EACH_HOLDABLE(DO_X)                                              \
     DO_X(UP, up, 0)                                                            \
     DO_X(DOWN, down, 0)                                                        \
@@ -7,21 +14,12 @@
     DO_X(SCROLL_DOWN, scroll_down, 0)                                          \
     DO_X(SCROLL_UP, scroll_up, 0)
 
-enum HOLDABLE_ID {
-// generate holdable IDs
-#define GENERATE_HOLDABLE_ID(KEY_NAME_UPPER, _, __)                            \
-    HOLDABLE_ID_##KEY_NAME_UPPER,
-    X_FOR_EACH_HOLDABLE(GENERATE_HOLDABLE_ID)
-#undef GENERATE_HOLDABLE_IDX
-        HOLDABLE_ID_COUNT,
-};
+#define X_FOR_EACH_FUNC(DO_X) DO_X(TOGGLE_DISABLE, toggle_disable, 0)
 
-#define X_FOR_EACH_CLICKABLE(DO_X)                                             \
-    DO_X(SCROLL_CLICK, scroll_click, BTN_MIDDLE)                               \
-    DO_X(RIGHT_CLICK, right_click, BTN_RIGHT)                                  \
-    DO_X(LEFT_CLICK, left_click, BTN_LEFT)                                     \
-    DO_X(BACKWARD, backward, BTN_SIDE)                                         \
-    DO_X(FORWARD, forward, BTN_EXTRA)
+#define X_FOR_EACH_KEY(DO_X)                                                   \
+    X_FOR_EACH_HOLDABLE(DO_X)                                                  \
+    X_FOR_EACH_CLICKABLE(DO_X)                                                 \
+    X_FOR_EACH_FUNC(DO_X)
 
 enum CLICKABLE_ID {
 #define GENERATE_CLICKABLE_ID(KEY_NAME_UPPER, _, __)                           \
@@ -31,12 +29,22 @@ enum CLICKABLE_ID {
         CLICKABLE_ID_COUNT
 };
 
-#define X_FOR_EACH_KEY(DO_X)                                                   \
-    X_FOR_EACH_HOLDABLE(DO_X)                                                  \
-    X_FOR_EACH_CLICKABLE(DO_X)
+enum HOLDABLE_ID {
+#define GENERATE_HOLDABLE_ID(KEY_NAME_UPPER, _, __)                            \
+    HOLDABLE_ID_##KEY_NAME_UPPER,
+    X_FOR_EACH_HOLDABLE(GENERATE_HOLDABLE_ID)
+#undef GENERATE_HOLDABLE_IDX
+        HOLDABLE_ID_COUNT,
+};
+
+enum FUNC_ID {
+#define GENERATE_FUNC_ID(FUNC_NAME_UPPER, _, __) FUNC_ID_##FUNC_NAME_UPPER,
+    X_FOR_EACH_FUNC(GENERATE_FUNC_ID)
+#undef GENERATE_FUNC_ID
+        FUNC_ID_COUNT
+};
 
 enum KEY_ID {
-// generate key IDs
 #define GENERATE_KEY_ID(KEY_NAME_UPPER, _, __) KEY_ID_##KEY_NAME_UPPER,
     X_FOR_EACH_KEY(GENERATE_KEY_ID)
 #undef GENERATE_KEY_ID
@@ -54,15 +62,6 @@ enum VAR_ID {
     X_FOR_EACH_VAR(GENERATE_VAR_ID)
 #undef GENERATE_VAR_ID
         VAR_ID_COUNT
-};
-
-#define X_FOR_EACH_FUNC(DO_X) DO_X(ENABLE_TOGGLE, enable_toggle)
-
-enum FUNC_ID {
-#define GENERATE_FUNC_ID(FUNC_NAME_UPPER, _) FUNC_ID##FUNC_NAME_UPPER,
-    X_FOR_EACH_FUNC(GENERATE_FUNC_ID)
-#undef GENERATE_FUNC_ID
-    FUNC_ID_COUNT
 };
 
 struct key {

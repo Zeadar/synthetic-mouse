@@ -23,7 +23,6 @@ enum READMODE {
     VAR_VALUE,
     DEV_VALUE,
     RANGE,
-    FUNC_KEY,
     SKIPLINE,
     WHITESPACE,
     READ,
@@ -39,12 +38,6 @@ static const char *var_names[VAR_ID_COUNT] = {
 #define GENERATE_VAR_NAME(_, VAR_NAME_LOWER) #VAR_NAME_LOWER,
     X_FOR_EACH_VAR(GENERATE_VAR_NAME)
 #undef GENERATE_VAR_NAME
-};
-
-static const char *func_names[FUNC_ID_COUNT] = {
-    #define GENERATE_FUNC_NAME(_, FUNC_NAME_LOWER) #FUNC_NAME_LOWER,
-        X_FOR_EACH_FUNC(GENERATE_FUNC_NAME)
-    #undef GENERATE_FUNC_NAME
 };
 
 #define STARTSIZE 16
@@ -134,10 +127,15 @@ const char *key_repr(struct key *key) {
 }
 
 static struct key *conf_key_slot(struct conf_data *data, enum KEY_ID key_id) {
-    if (key_id < KEY_ID_SCROLL_CLICK)
-        return &data->hold_keys[key_id];
+    int key_index = key_id;
 
-    return &data->click_keys[key_id - HOLDABLE_ID_COUNT];
+    if (key_index < HOLDABLE_ID_COUNT)
+        return &data->hold_keys[key_index];
+
+    if (key_index < HOLDABLE_ID_COUNT + CLICKABLE_ID_COUNT)
+        return &data->click_keys[key_index - HOLDABLE_ID_COUNT];
+
+    return &data->func_keys[key_index - HOLDABLE_ID_COUNT - CLICKABLE_ID_COUNT];
 }
 
 static FILE *open_config_file(char *resolved_path, size_t resolved_path_size) {
@@ -175,7 +173,7 @@ static FILE *open_config_file(char *resolved_path, size_t resolved_path_size) {
     if (candidates[1] != 0)
         fprintf(stderr, ", %s", candidates[1]);
     fprintf(stderr, ", %s\n", SYSTEM_CONF_NAME);
-    exit(1);
+    exit(5);
 }
 
 struct conf_data parse_config() {
@@ -232,13 +230,11 @@ struct conf_data parse_config() {
             exit(5);
             break;
 
-        case FUNC_KEY:
-            break;
         case KEY_VALUE:
             key = conf_key_slot(&data, key_id);
 
             if (buf[0] == PASSTHROUGH) {
-                key->is_pass = -1;
+                key->is_pass = 1;
                 if (buf[1] == '\0') {
                     mode = WHITESPACE;
                     next_mode = KEY_VALUE;
@@ -317,6 +313,15 @@ struct conf_data parse_config() {
 
     fclose(conf_file);
 
+    if (!data.enable_passthrough &&
+        (data.func_keys[FUNC_ID_TOGGLE_DISABLE].ev_code == 0 &&
+         data.func_keys[FUNC_ID_TOGGLE_DISABLE].ev_type == 0)) {
+        if (!is_quiet)
+            fprintf(stderr, "Passthrough cannot be disabled while "
+                            "disable_toggle is assigned");
+        exit(5);
+    }
+
     if (is_quiet)
         return data;
 
@@ -326,20 +331,18 @@ struct conf_data parse_config() {
         printf("\nPassthrough disabled!\n");
 
     printf("\nKey bindings\n");
-    printf("  %-12s %-24s %6s %6s %8s %6s\n", "action", "evdev", "code", "pass",
+    printf("  %-14s %-24s %6s %6s %8s %6s\n", "action", "evdev", "code", "pass",
            "release", "press");
-    printf("  %-12s %-24s %6s %6s %8s %6s\n", "------------",
+    printf("  %-14s %-24s %6s %6s %8s %6s\n", "--------------",
            "------------------------", "------", "------", "--------",
            "------");
     for (int key_id = 0; key_id < KEY_ID_COUNT; key_id++) {
         struct key *summary_key = conf_key_slot(&data, key_id);
-        printf("  %-12s %-24s %6d %6s %8d %6d\n", key_names[key_id],
+        printf("  %-14s %-24s %6d %6s %8d %6d\n", key_names[key_id],
                key_repr(summary_key), summary_key->ev_code,
                summary_key->is_pass ? "yes" : "no", summary_key->release,
                summary_key->press);
     }
-
-    // TODO: Rather than checking if `data.vars` is filled, set sane defaults
 
     printf("\nVariables\n");
     printf("  %-15s %10s\n", "name", "value");

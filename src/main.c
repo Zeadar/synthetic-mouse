@@ -53,6 +53,11 @@ int click_action[CLICKABLE_ID_COUNT] = {
     X_FOR_EACH_CLICKABLE(GENERATE_CLICK_ACTION)
 #undef GENERATE_CLICK_ACTION
 };
+int hold_action[HOLDABLE_ID_COUNT] = {
+#define GENERATE_HOLD_ACTION(_, __, BUTTON_CODE) BUTTON_CODE,
+    X_FOR_EACH_HOLDABLE(GENERATE_HOLD_ACTION)
+#undef GENERATE_HOLD_ACTION
+};
 struct input_event passthrough_frame[PASSTHROUGH_FRAME_MAX];
 size_t passthrough_frame_len = 0;
 struct input_event passthrough_pending[PASSTHROUGH_FRAME_MAX];
@@ -64,6 +69,7 @@ volatile sig_atomic_t thread_running = 0;
 int is_quiet = 0;
 int is_disabled = 0;
 int is_output_log = 0;
+int is_force_passthrough = 0;
 
 struct v2 v2_normalize(const struct v2 v) {
     const float len = sqrtf(v.x * v.x + v.y * v.y);
@@ -84,7 +90,7 @@ struct v2 v2_scale(const struct v2 v, const float s) {
 
 // I hate this solution
 int log_write_event(const struct libevdev_uinput *uinput_dev, unsigned int type,
-                 unsigned int code, int value) {
+                    unsigned int code, int value) {
     if (is_output_log)
         printf(F_LOG "\n", "output", libevdev_event_type_get_name(type),
                libevdev_event_code_get_name(type, code), value);
@@ -333,11 +339,11 @@ void *mouse_handler() {
 
         if (is_x)
             log_write_event(synthetic_mouse, EV_REL, REL_X,
-                         (int) roundf(velocity.x));
+                            (int) roundf(velocity.x));
 
         if (is_y)
             log_write_event(synthetic_mouse, EV_REL, REL_Y,
-                         (int) roundf(velocity.y));
+                            (int) roundf(velocity.y));
 
         mb = motion_state[HOLDABLE_ID_MOUSE_BREAK]
                  ? conf_data.vars[VAR_ID_BREAK_FACTOR]
@@ -345,18 +351,18 @@ void *mouse_handler() {
 
         if ((is_s = motion_state[HOLDABLE_ID_SCROLL_UP])) {
             log_write_event(synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
-                         (int) roundf(conf_data.vars[VAR_ID_WHEEL] *
-                                      motion_state[HOLDABLE_ID_SCROLL_UP] *
-                                      mb));
+                            (int) roundf(conf_data.vars[VAR_ID_WHEEL] *
+                                         motion_state[HOLDABLE_ID_SCROLL_UP] *
+                                         mb));
         } else if ((is_s = motion_state[HOLDABLE_ID_SCROLL_DOWN])) {
-            log_write_event(synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
-                         -(int) roundf(conf_data.vars[VAR_ID_WHEEL] *
-                                       motion_state[HOLDABLE_ID_SCROLL_DOWN] *
-                                       mb));
+            log_write_event(
+                synthetic_mouse, EV_REL, REL_WHEEL_HI_RES,
+                -(int) roundf(conf_data.vars[VAR_ID_WHEEL] *
+                              motion_state[HOLDABLE_ID_SCROLL_DOWN] * mb));
         }
 
         if (is_x || is_y || is_s)
-            log_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
+            libevdev_uinput_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
 
         pthread_mutex_unlock(&motion_lock);
 
@@ -404,7 +410,7 @@ int main(int argc, char **argv) {
             is_output_log = 1;
             continue;
         }
-        if (strcmp(argv[i], "--log-pass") == 0){
+        if (strcmp(argv[i], "--log-pass") == 0) {
             is_pass_log = 1;
             continue;
         }
@@ -504,6 +510,31 @@ int main(int argc, char **argv) {
             continue;
         }
 
+        for (int key_id = 0; key_id != FUNC_ID_COUNT; ++key_id) {
+            struct key *key = &conf_data.func_keys[key_id];
+
+            if (!(ev.code == key->ev_code && ev.type == key->ev_type))
+                continue;
+
+            if (key->press == ev.value) {
+                is_matched = 1;
+                if (key->is_pass)
+                    should_passthrough = 1;
+                else
+                    break;
+
+                if (key_id == FUNC_ID_TOGGLE_DISABLE)
+                    is_force_passthrough = !is_force_passthrough;
+
+            }
+        }
+
+        if (is_force_passthrough) {
+            is_matched = 1;
+            should_passthrough = 1;
+            goto passthrough;
+        }
+
         for (int key_id = 0; key_id < HOLDABLE_ID_COUNT; key_id++) {
             struct key *key = &conf_data.hold_keys[key_id];
 
@@ -566,8 +597,8 @@ int main(int argc, char **argv) {
             }
 
             log_write_event(synthetic_mouse, EV_KEY, click_action[key_id],
-                         ev.value == key->press);
-            log_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
+                            ev.value == key->press);
+            libevdev_uinput_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
 
             is_matched = 1;
             if (key->is_pass)
@@ -575,6 +606,8 @@ int main(int argc, char **argv) {
             else
                 break;
         }
+
+    passthrough:
 
         if (is_matched && !should_passthrough) {
             clear_passthrough_pending();
