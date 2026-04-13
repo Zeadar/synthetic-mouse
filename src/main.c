@@ -65,7 +65,7 @@ size_t passthrough_pending_len = 0;
 
 pthread_mutex_t motion_lock;
 pthread_t thread_id;
-volatile sig_atomic_t thread_running = 0;
+volatile sig_atomic_t is_thread_running = 0;
 int is_quiet = 0;
 int is_disabled = 0;
 int is_output_log = 0;
@@ -86,6 +86,11 @@ struct v2 v2_scale(const struct v2 v, const float s) {
         .x = v.x * s,
         .y = v.y * s,
     };
+}
+
+void log_event(struct input_event *ev, const char *setting) {
+    printf(F_LOG "\n", setting, libevdev_event_type_get_name(ev->type),
+           libevdev_event_code_get_name(ev->type, ev->code), ev->value);
 }
 
 // I hate this solution
@@ -144,7 +149,7 @@ static void inherit_device_caps(struct libevdev *dst,
 void exit_handler(int sig) {
     if (!is_quiet)
         printf("\nRecieved sig %d, exiting...\n", sig);
-    if (thread_running) {
+    if (is_thread_running) {
         pthread_mutex_lock(&motion_lock);
         pthread_cancel(thread_id);
         pthread_mutex_unlock(&motion_lock);
@@ -214,68 +219,6 @@ struct libevdev *get_device_by_id(char *dev_id, int verbose) {
     return 0;
 }
 
-void log_event(struct input_event *ev) {
-    if (ev->type == EV_SYN)
-        return;
-
-    if (ev->type == EV_MSC)
-        return;
-
-    printf(F_LOG "\n", "input", libevdev_event_type_get_name(ev->type),
-           libevdev_event_code_get_name(ev->type, ev->code), ev->value);
-}
-
-static void queue_passthrough_event(const struct input_event *ev) {
-    if (passthrough_frame_len == PASSTHROUGH_FRAME_MAX) {
-        if (!is_quiet)
-            fprintf(stderr,
-                    "Passthrough frame overflow, dropping event %s %s\n",
-                    libevdev_event_type_get_name(ev->type),
-                    libevdev_event_code_get_name(ev->type, ev->code));
-        return;
-    }
-
-    passthrough_frame[passthrough_frame_len++] = *ev;
-}
-
-static void queue_passthrough_pending(const struct input_event *ev) {
-    if (passthrough_pending_len == PASSTHROUGH_FRAME_MAX) {
-        if (!is_quiet)
-            fprintf(stderr,
-                    "Passthrough pending overflow, dropping event %s %s\n",
-                    libevdev_event_type_get_name(ev->type),
-                    libevdev_event_code_get_name(ev->type, ev->code));
-        return;
-    }
-
-    passthrough_pending[passthrough_pending_len++] = *ev;
-}
-
-static void commit_passthrough_pending(void) {
-    for (size_t i = 0; i < passthrough_pending_len; ++i)
-        queue_passthrough_event(&passthrough_pending[i]);
-
-    passthrough_pending_len = 0;
-}
-
-static void clear_passthrough_pending(void) {
-    passthrough_pending_len = 0;
-}
-
-static void flush_passthrough_frame(int pass_logging) {
-    for (size_t i = 0; i < passthrough_frame_len; ++i) {
-        struct input_event *ev = &passthrough_frame[i];
-        if (pass_logging)
-            printf(F_LOG "\n", "passthrough",
-                   libevdev_event_type_get_name(ev->type),
-                   libevdev_event_code_get_name(ev->type, ev->code), ev->value);
-        libevdev_uinput_write_event(synthetic_passthrough, ev->type, ev->code,
-                                    ev->value);
-    }
-
-    passthrough_frame_len = 0;
-}
-
 void *mouse_handler() {
     struct v2 input_direction = {0};
     struct v2 velocity = {0};
@@ -297,7 +240,7 @@ void *mouse_handler() {
         if (memcmp(&motion_state, &(const float[HOLDABLE_ID_COUNT]) {0},
                    sizeof(motion_state)) == 0) {
             if (cycles++ == 100 * 60) {
-                thread_running = 0;
+                is_thread_running = 0;
                 pthread_mutex_unlock(&motion_lock);
                 pthread_exit(0);
             }
@@ -466,49 +409,26 @@ int main(int argc, char **argv) {
 
     libevdev_grab(current_device, LIBEVDEV_GRAB);
 
-    // thread_id = pthread_create(&thread_id, 0, mouse_handler, 0);
-
     do {
-        if (!thread_running) {
-            thread_running = 1;
-            pthread_create(&thread_id, 0, mouse_handler, 0);
-        }
-
         struct input_event ev;
         rc =
             libevdev_next_event(current_device, LIBEVDEV_READ_FLAG_NORMAL, &ev);
         if (rc != 0) {
-            fprintf(stderr, "%s\n", strerror(-rc));
+            if (!is_quiet)
+                fprintf(stderr, "%s\n", strerror(-rc));
             continue;
         }
 
-        int is_matched = 0;
-        int should_passthrough = 0;
+        if (ev.type == EV_SYN || ev.type == EV_MSC)
+            continue;
+
+        if (!is_thread_running) {
+            is_thread_running = 1;
+            pthread_create(&thread_id, 0, mouse_handler, 0);
+        }
 
         if (is_input_log)
-            log_event(&ev);
-
-        if (conf_data.enable_passthrough && ev.type == EV_MSC) {
-            queue_passthrough_pending(&ev);
-            continue;
-        }
-
-        if (conf_data.enable_passthrough && ev.type == EV_SYN) {
-            if (ev.code != SYN_REPORT) {
-                if (passthrough_frame_len != 0) {
-                    commit_passthrough_pending();
-                    queue_passthrough_event(&ev);
-                } else {
-                    clear_passthrough_pending();
-                }
-            } else if (passthrough_frame_len != 0) {
-                queue_passthrough_event(&ev);
-                flush_passthrough_frame(is_pass_log);
-            } else {
-                clear_passthrough_pending();
-            }
-            continue;
-        }
+            log_event(&ev, "input");
 
         for (int key_id = 0; key_id != FUNC_ID_COUNT; ++key_id) {
             struct key *key = &conf_data.func_keys[key_id];
@@ -517,21 +437,18 @@ int main(int argc, char **argv) {
                 continue;
 
             if (key->press == ev.value) {
-                is_matched = 1;
-
-                if (key_id == FUNC_ID_TOGGLE_DISABLE)
+                if (key_id == FUNC_ID_TOGGLE_DISABLE) {
                     is_force_passthrough = !is_force_passthrough;
+                }
 
                 if (key->is_pass)
-                    should_passthrough = 1;
+                    goto passthrough;
                 else
-                    break;
+                    goto endpoint;
             }
         }
 
         if (is_force_passthrough) {
-            is_matched = 1;
-            should_passthrough = 1;
             goto passthrough;
         }
 
@@ -549,7 +466,6 @@ int main(int argc, char **argv) {
 
             if (key->ev_type == EV_KEY) {
                 if (strength > 1 || strength < 0) {
-                    is_matched = 1;
                     continue;
                 }
             } else {
@@ -565,16 +481,10 @@ int main(int argc, char **argv) {
             motion_state[key_id] = strength;
             pthread_mutex_unlock(&motion_lock);
 
-            is_matched = 1;
             if (key->is_pass)
-                should_passthrough = 1;
+                goto passthrough;
             else
-                break;
-        }
-
-        if (is_matched && !should_passthrough) {
-            clear_passthrough_pending();
-            continue;
+                goto endpoint;
         }
 
         for (int key_id = 0; key_id < CLICKABLE_ID_COUNT; ++key_id) {
@@ -592,7 +502,6 @@ int main(int argc, char **argv) {
             float strength = (val - rel) * (1 / (pre - rel));
 
             if (key->ev_type == EV_KEY && (strength > 1 || strength < 0)) {
-                is_matched = 1;
                 continue;
             }
 
@@ -600,23 +509,27 @@ int main(int argc, char **argv) {
                             ev.value == key->press);
             libevdev_uinput_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
 
-            is_matched = 1;
             if (key->is_pass)
-                should_passthrough = 1;
+                goto passthrough;
             else
-                break;
+                goto endpoint;
         }
 
     passthrough:
 
-        if (is_matched && !should_passthrough) {
-            clear_passthrough_pending();
+        if (!conf_data.enable_passthrough)
             continue;
-        }
-        if (conf_data.enable_passthrough) {
-            commit_passthrough_pending();
-            queue_passthrough_event(&ev);
-        }
+
+        if (is_pass_log)
+            log_event(&ev, "passthrough");
+
+        libevdev_uinput_write_event(synthetic_passthrough, ev.type, ev.code,
+                                    ev.value);
+        libevdev_uinput_write_event(synthetic_passthrough, EV_SYN, SYN_REPORT,
+                                    0);
+
+    endpoint:
+
     } while (rc == 1 || rc == 0 || rc == -EAGAIN);
 
     return 0;
