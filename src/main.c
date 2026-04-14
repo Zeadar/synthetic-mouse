@@ -58,6 +58,7 @@ int click_action[CLICKABLE_ID_COUNT] = {
 pthread_mutex_t motion_lock;
 pthread_t thread_id;
 _Atomic int is_thread_running = 0;
+volatile sig_atomic_t shutdown_requested = 0;
 int is_quiet = 0;
 int is_disabled = 0;
 int is_output_log = 0;
@@ -138,9 +139,7 @@ static void inherit_device_caps(struct libevdev *dst,
     }
 }
 
-void exit_handler(int sig) {
-    if (!is_quiet)
-        printf("\nRecieved sig %d, exiting...\n", sig);
+static void cleanup_and_exit(int exit_code) {
     if (atomic_load(&is_thread_running)) {
         pthread_mutex_lock(&motion_lock);
         pthread_cancel(thread_id);
@@ -153,7 +152,11 @@ void exit_handler(int sig) {
         libevdev_uinput_destroy(synthetic_passthrough);
     libevdev_uinput_destroy(synthetic_mouse);
     free(conf_data.dev_id);
-    exit(0);
+    exit(exit_code);
+}
+
+void exit_handler(int sig) {
+    shutdown_requested = sig;
 }
 
 struct libevdev *get_device_by_id(char *dev_id, int verbose) {
@@ -413,6 +416,8 @@ int main(int argc, char **argv) {
         rc =
             libevdev_next_event(current_device, LIBEVDEV_READ_FLAG_NORMAL, &ev);
         if (rc != 0) {
+            if (shutdown_requested && rc == -EINTR)
+                break;
             if (!is_quiet)
                 fprintf(stderr, "%s\n", strerror(-rc));
             continue;
@@ -528,6 +533,12 @@ int main(int argc, char **argv) {
         continue; // to make the LSP stfu
 
     } while (rc == 1 || rc == 0 || rc == -EAGAIN);
+
+    if (shutdown_requested) {
+        if (!is_quiet)
+            printf("\nRecieved sig %d, exiting...\n", shutdown_requested);
+        cleanup_and_exit(0);
+    }
 
     return 2; // loop sould not end normally
 }
