@@ -53,11 +53,6 @@ int click_action[CLICKABLE_ID_COUNT] = {
     X_FOR_EACH_CLICKABLE(GENERATE_CLICK_ACTION)
 #undef GENERATE_CLICK_ACTION
 };
-int hold_action[HOLDABLE_ID_COUNT] = {
-#define GENERATE_HOLD_ACTION(_, __, BUTTON_CODE) BUTTON_CODE,
-    X_FOR_EACH_HOLDABLE(GENERATE_HOLD_ACTION)
-#undef GENERATE_HOLD_ACTION
-};
 struct input_event passthrough_frame[PASSTHROUGH_FRAME_MAX];
 size_t passthrough_frame_len = 0;
 struct input_event passthrough_pending[PASSTHROUGH_FRAME_MAX];
@@ -419,9 +414,6 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        if (ev.type == EV_SYN || ev.type == EV_MSC)
-            continue;
-
         if (!is_thread_running) {
             is_thread_running = 1;
             pthread_create(&thread_id, 0, mouse_handler, 0);
@@ -451,6 +443,9 @@ int main(int argc, char **argv) {
         if (is_force_passthrough) {
             goto passthrough;
         }
+
+        if (ev.type == EV_SYN || ev.type == EV_MSC)
+            continue;
 
         for (int key_id = 0; key_id < HOLDABLE_ID_COUNT; key_id++) {
             struct key *key = &conf_data.hold_keys[key_id];
@@ -529,6 +524,7 @@ int main(int argc, char **argv) {
                                     0);
 
     endpoint:
+        continue; // to make the LSP stfu
 
     } while (rc == 1 || rc == 0 || rc == -EAGAIN);
 
