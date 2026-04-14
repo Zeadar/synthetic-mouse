@@ -1,8 +1,6 @@
 # Synthetic Mouse
 
-Synthetic Mouse maps events from a Linux input device to a virtual mouse. Common setups include a keyboard numpad used as a mouse, or a game controller used for pointer movement, buttons, and scrolling.
-
-The program reads a configuration file, opens one device from `/dev/input/by-id/`, creates a virtual mouse through `uinput`, and applies the selected bindings.
+Synthetic Mouse maps events from one Linux input device to a virtual mouse. Common setups include a keyboard numpad used for pointer control, or a controller used for movement, buttons, and scrolling.
 
 ## Requirements
 
@@ -17,14 +15,16 @@ Build requirements:
 Runtime requirements:
 
 - Linux with `evdev`
-- `uinput` available
-- permission to read the selected `/dev/input` device and create virtual input devices
+- `uinput` support
+- permission to read the selected `/dev/input` device
+- permission to create virtual input devices
 
-Typical runtime access is provided by `root`, or by suitable `udev` rules and group membership for input and `uinput`.
+Typical runtime access is provided by `root`, or by suitable `udev` rules and group membership for `input` and `uinput`.
 
-### Adding user to input group
+Example:
+
 ```sh
-sudo usermod -aG input [username]
+sudo usermod -aG input <username>
 ```
 
 ## Installing Build Dependencies
@@ -66,6 +66,8 @@ meson setup build --wipe --buildtype=release
 meson compile -C build
 ```
 
+The binary is written to `build/synthetic-mouse`.
+
 ## Installing
 
 Basic install:
@@ -78,12 +80,11 @@ sudo meson install -C build
 
 Optional install payloads:
 
-- by default, `install_config_files`, `install_systemd_unit`, and `install_openrc_service` are all `false`
-- `-Dinstall_config_files=true` installs the default config and both sample configs under `/etc/synthetic-mouse/`
-- `-Dinstall_systemd_unit=true` installs the systemd unit
-- `-Dinstall_openrc_service=true` installs the OpenRC service
+- `-Dinstall_config_files=true` installs `synthetic.conf`, `synthetic_keyboard.conf.sample`, and `synthetic_controller.conf.sample`
+- `-Dinstall_systemd_unit=true` installs the systemd service unit
+- `-Dinstall_openrc_service=true` installs the OpenRC service script
 
-Example with all optional install files:
+Example with all optional payloads:
 
 ```sh
 meson setup build --wipe --buildtype=release \
@@ -94,7 +95,7 @@ meson compile -C build
 sudo meson install -C build
 ```
 
-Installed paths depend on Meson `prefix`, `bindir`, and `sysconfdir`. With the default prefix, the main paths are usually:
+With Meson defaults, the main install paths are usually:
 
 - `/usr/local/bin/synthetic-mouse`
 - `/etc/synthetic-mouse/synthetic.conf`
@@ -103,52 +104,56 @@ Installed paths depend on Meson `prefix`, `bindir`, and `sysconfdir`. With the d
 
 ## Running
 
-Available commands:
+Common commands:
 
 ```sh
 sudo synthetic-mouse --list-devices
-sudo synthetic-mouse --log-keys
+sudo synthetic-mouse --log-input
+sudo synthetic-mouse --log-output
+sudo synthetic-mouse --log-pass
 sudo synthetic-mouse
 ```
 
 Command line options:
 
-- `--list-devices` lists available `/dev/input/by-id/` device names and exits
-- `--log-keys` prints incoming source events and passthrough events
+- `--list-devices` lists `/dev/input/by-id/` device names and exits
+- `--log-input` prints source input events
+- `--log-output` prints emitted mouse events
+- `--log-pass` prints passthrough events
 - `--quiet` suppresses non-critical diagnostics
 - `--help` prints usage text
 
 ## Configuration
 
-### Config Search Order
+### Search Order
 
-Synthetic Mouse searches for `synthetic.conf` in this order:
+`synthetic.conf` is searched in this order:
 
 1. `./synthetic.conf`
 2. `$XDG_CONFIG_HOME/synthetic-mouse/synthetic.conf`
 3. `~/.config/synthetic-mouse/synthetic.conf`
 4. `/etc/synthetic-mouse/synthetic.conf`
 
-### Config Format
+### Format
 
 The file is whitespace-delimited.
 
 - `#` starts a comment
 - one property is placed on each line
-- action bindings use libevdev event code names such as `KEY_KP8`, `BTN_TR2`, `ABS_RX`
+- action bindings use libevdev event code names such as `KEY_KP8`, `BTN_TR2`, and `ABS_RX`
 - axis bindings may include a range written as `release..press`
-- a binding may be prefixed with `!` to handle the event and also pass the original event through
-- `enable_passthrough` is a standalone property with no value
+- prefixing a binding input with `!` keeps the original matching event available in passthrough output
 
 Example:
 
 ```conf
 dev_id usb-Sony_Computer_Entertainment_Wireless_Controller-if03-event-joystick
 
-acceleration 0.5
-max_speed 20
-break_factor 0.2
-wheel 60
+acceleration        0.5
+max_speed           20
+mouse_break_factor  0.2
+scroll_break_factor 0.35
+wheel               60
 
 left        ABS_RX 128..0
 right       ABS_RX 128..255
@@ -158,63 +163,48 @@ left_click  BTN_TR2
 right_click BTN_TL2
 ```
 
-### Required and Optional Properties
+### Properties
 
 `dev_id`
 
 - required
 - must match one filename from `/dev/input/by-id/`
-- discoverable through `synthetic-mouse --list-devices`
+- can be discovered with `synthetic-mouse --list-devices`
 
-`enable_passthrough`
+Passthrough is enabled by default.
 
-- optional, but critical for keyboard-based setups
-- when enabled, Synthetic Mouse creates a cloned virtual version of the original device and forwards events into that clone
-- when disabled, handled events are consumed and the source device remains grabbed by Synthetic Mouse
-
-Keyboard guidance:
-
-- `enable_passthrough` is effectively mandatory for a keyboard
-- without passthrough, the grabbed keyboard stops behaving like a keyboard while Synthetic Mouse is running
-- with passthrough enabled, normal typing and non-mouse bindings remain available through the cloned device
-
-Controller guidance:
-
-- `enable_passthrough` is usually undesirable for a controller
-- most controller mappings use the device only as a mouse source, so forwarding the full original controller stream often creates duplicate or unwanted gamepad input
-- passthrough should be enabled for a controller only when the original controller events are also needed by another application or desktop stack
+- unbound events continue through the passthrough device
+- bound events are consumed unless the binding input is prefixed with `!`
+- `toggle_disable` temporarily disables remapping and forwards the source device unchanged until pressed again
 
 ### Variables
 
 `acceleration`
 
-- controls how quickly pointer speed ramps up while a movement action remains active
-- lower values feel steadier and slower to ramp
-- higher values feel more aggressive and responsive
+- controls how quickly pointer speed ramps up while movement is held
 
 `max_speed`
 
-- sets the movement speed cap
-- lower values give finer control
-- higher values increase top speed across the screen
+- sets the pointer speed cap
 
-`break_factor`
+`mouse_break_factor`
 
-- controls the slowdown applied while `mouse_break` is held
-- smaller values produce stronger slowing
-- larger values keep more of the normal speed
+- sets the movement speed multiplier while `mouse_break` is held
+
+`scroll_break_factor`
+
+- sets the scroll speed multiplier while `mouse_break` is held
 
 `wheel`
 
-- sets the magnitude used for scroll events
-- smaller values feel gentler
-- larger values feel faster and coarser
+- sets the wheel amount emitted for each scroll step
 
-Defaults used when a value is omitted:
+Defaults used when omitted:
 
 - `acceleration 0.5`
+- `mouse_break_factor 0.25`
 - `max_speed 12`
-- `break_factor 0.25`
+- `scroll_break_factor 0.35`
 - `wheel 120`
 
 ### Available Actions
@@ -237,14 +227,19 @@ Mouse button actions:
 - `backward`
 - `forward`
 
+Function actions:
+
+- `toggle_disable`
+
 ### Digital and Analog Bindings
 
 Digital keys and buttons:
 
 ```conf
-up          KEY_KP8
-left_click  KEY_KP0
-mouse_break ! KEY_LEFTSHIFT
+up            KEY_KP8
+left_click    KEY_KP0
+mouse_break   ! KEY_LEFTMETA
+toggle_disable KEY_INSERT
 ```
 
 Axis-based bindings:
@@ -263,56 +258,7 @@ Range meaning:
 - `128..0` means activation grows as the axis moves from `128` toward `0`
 - `128..255` means activation grows as the axis moves from `128` toward `255`
 
-This is mainly useful for analog sticks and triggers.
-
-## Choosing a Config
-
-### Keyboard Setup
-
-Recommended starting point:
-
-- `synthetic_keyboard.conf`
-
-Typical behavior:
-
-- numpad or nearby keys control movement, clicks, and scroll
-- `enable_passthrough` should remain enabled
-- one modifier key may be marked with `!` so the original key event still passes through
-
-Key discovery workflow:
-
-1. Run `synthetic-mouse --list-devices` and copy the correct keyboard `dev_id`.
-2. Run `synthetic-mouse --log-keys`.
-3. Press the intended keys and note the printed `KEY_*` names.
-4. Place those names in the config file.
-5. Keep `enable_passthrough` enabled.
-
-### Controller Setup
-
-Recommended starting point:
-
-- `synthetic_controller.conf`
-
-Typical behavior:
-
-- one analog stick controls pointer movement
-- buttons control left and right click
-- another stick or axis controls scrolling
-- `enable_passthrough` normally stays disabled
-
-Axis discovery workflow:
-
-1. Run `synthetic-mouse --list-devices` and copy the correct controller `dev_id`.
-2. Run `synthetic-mouse --log-keys`.
-3. Move one stick or trigger at a time.
-4. Note the `ABS_*` code names and the observed resting and extreme values.
-5. Write bindings with the matching `release..press` direction.
-
-Practical examples:
-
-- centered stick resting near `128`, left edge near `0`: `ABS_RX 128..0`
-- centered stick resting near `128`, right edge near `255`: `ABS_RX 128..255`
-- trigger resting at `0`, fully pressed at `255`: `ABS_Z 0..255`
+This format is mainly useful for analog sticks and triggers.
 
 ## Tuning Guide
 
@@ -329,7 +275,8 @@ For faster travel across large displays:
 For finer temporary control:
 
 - bind `mouse_break`
-- lower `break_factor`
+- reduce `mouse_break_factor`
+- reduce `scroll_break_factor`
 
 For gentler scrolling:
 
@@ -346,25 +293,25 @@ Keyboard example:
 ```conf
 dev_id   usb-SteelSeries_SteelSeries_Apex_3-event-kbd
 
-acceleration  0.5
-max_speed     20
-break_factor  0.2
-wheel         40
+acceleration        0.3
+max_speed           16
+mouse_break_factor  0.35
+scroll_break_factor 0.35
+wheel               40
 
-enable_passthrough
-
-up            KEY_KP8
-down          KEY_KP5
-left          KEY_KP4
-right         KEY_KP6
-right_click   KEY_KPPLUS
-left_click    KEY_KP0
-scroll_down   KEY_KP3
-scroll_up     KEY_KP1
-scroll_click  KEY_KP2
-backward      KEY_KP7
-forward       KEY_KP9
-mouse_break   ! KEY_LEFTSHIFT
+up             KEY_KP8
+down           KEY_KP5
+left           KEY_KP4
+right          KEY_KP6
+right_click    KEY_KPPLUS
+left_click     KEY_KP0
+scroll_down    KEY_KP3
+scroll_up      KEY_KP1
+scroll_click   KEY_KP2
+backward       KEY_KP7
+forward        KEY_KP9
+mouse_break    ! KEY_LEFTMETA
+toggle_disable KEY_INSERT
 ```
 
 Controller example:
@@ -372,10 +319,11 @@ Controller example:
 ```conf
 dev_id   usb-Sony_Computer_Entertainment_Wireless_Controller-if03-event-joystick
 
-acceleration  0.5
-max_speed     20
-break_factor  0.2
-wheel         60
+acceleration        0.5
+max_speed           20
+mouse_break_factor  0.2
+scroll_break_factor 0.35
+wheel               60
 
 left          ABS_RX     128..0
 right         ABS_RX     128..255

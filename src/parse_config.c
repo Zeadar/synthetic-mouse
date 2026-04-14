@@ -194,6 +194,7 @@ struct conf_data parse_config() {
     data.vars[VAR_ID_ACCELERATION] = 0.5;
     data.vars[VAR_ID_MOUSE_BREAK_FACTOR] = 0.25;
     data.vars[VAR_ID_MAX_SPEED] = 12;
+    data.vars[VAR_ID_SCROLL_BREAK_FACTOR] = 0.35;
     data.enable_passthrough = 1;
 
     while ((c = getc(conf_file)) != EOF) {
