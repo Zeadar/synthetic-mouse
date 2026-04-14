@@ -3,7 +3,7 @@ project(
     'c',
     meson_version: '>=1.3.0',
     default_options: [
-        'c_std=gnu23',
+        'c_std=gnu11',
         'warning_level=1',
     ],
 )
