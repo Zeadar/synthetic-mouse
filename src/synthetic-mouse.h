@@ -21,6 +21,13 @@
     X_FOR_EACH_CLICKABLE(DO_X)                                                 \
     X_FOR_EACH_FUNC(DO_X)
 
+#define X_FOR_EACH_VAR(DO_X)                                                   \
+    DO_X(ACCELERATION, acceleration)                                           \
+    DO_X(MOUSE_BREAK_FACTOR, mouse_break_factor)                               \
+    DO_X(MAX_SPEED, max_speed)                                                 \
+    DO_X(WHEEL, wheel)                                                         \
+    DO_X(SCROLL_BREAK_FACTOR, scroll_break_factor)
+
 enum CLICKABLE_ID {
 #define GENERATE_CLICKABLE_ID(KEY_NAME_UPPER, _, __)                           \
     CLICKABLE_ID_##KEY_NAME_UPPER,
@@ -50,12 +57,6 @@ enum KEY_ID {
 #undef GENERATE_KEY_ID
         KEY_ID_COUNT,
 };
-
-#define X_FOR_EACH_VAR(DO_X)                                                   \
-    DO_X(ACCELERATION, acceleration)                                           \
-    DO_X(BREAK_FACTOR, break_factor)                                           \
-    DO_X(MAX_SPEED, max_speed)                                                 \
-    DO_X(WHEEL, wheel)
 
 enum VAR_ID {
 #define GENERATE_VAR_ID(VAR_NAME_UPPER, _) VAR_ID_##VAR_NAME_UPPER,

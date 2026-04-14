@@ -250,6 +250,7 @@ void *mouse_handler() {
         else {
             input_direction.y = 0;
         }
+
         if ((is_x = motion_state[HOLDABLE_ID_LEFT]))
             input_direction.x = -1 * motion_state[HOLDABLE_ID_LEFT];
         else if ((is_x = motion_state[HOLDABLE_ID_RIGHT]))
@@ -260,7 +261,7 @@ void *mouse_handler() {
 
         if (motion_state[HOLDABLE_ID_MOUSE_BREAK]) {
             max = conf_data.vars[VAR_ID_MAX_SPEED] *
-                  conf_data.vars[VAR_ID_BREAK_FACTOR];
+                  conf_data.vars[VAR_ID_MOUSE_BREAK_FACTOR];
         } else {
             max = conf_data.vars[VAR_ID_MAX_SPEED];
         }
@@ -284,7 +285,7 @@ void *mouse_handler() {
                             (int) roundf(velocity.y));
 
         mb = motion_state[HOLDABLE_ID_MOUSE_BREAK]
-                 ? conf_data.vars[VAR_ID_BREAK_FACTOR]
+                 ? conf_data.vars[VAR_ID_SCROLL_BREAK_FACTOR]
                  : 1;
 
         if ((is_s = motion_state[HOLDABLE_ID_SCROLL_UP])) {
@@ -528,5 +529,5 @@ int main(int argc, char **argv) {
 
     } while (rc == 1 || rc == 0 || rc == -EAGAIN);
 
-    return 0;
+    return 2; // loop sould not end normally
 }

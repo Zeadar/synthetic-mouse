@@ -192,7 +192,7 @@ struct conf_data parse_config() {
     // sane defaults
     data.vars[VAR_ID_WHEEL] = 120;
     data.vars[VAR_ID_ACCELERATION] = 0.5;
-    data.vars[VAR_ID_BREAK_FACTOR] = 0.25;
+    data.vars[VAR_ID_MOUSE_BREAK_FACTOR] = 0.25;
     data.vars[VAR_ID_MAX_SPEED] = 12;
     data.enable_passthrough = 1;
 
@@ -326,6 +326,7 @@ struct conf_data parse_config() {
         return data;
 
     printf("\nConfig\n");
+    printf("  path: %s\n", conf_path);
     printf("  dev_id: %s\n", data.dev_id ? data.dev_id : "");
     if (!data.enable_passthrough)
         printf("\nPassthrough disabled!\n");
@@ -345,10 +346,10 @@ struct conf_data parse_config() {
     }
 
     printf("\nVariables\n");
-    printf("  %-15s %10s\n", "name", "value");
-    printf("  %-15s %10s\n", "---------------", "----------");
+    printf("  %-20s %15s\n", "name", "value");
+    printf("  %-20s %15s\n", "--------------------", "----------");
     for (int var_id = 0; var_id != VAR_ID_COUNT; ++var_id) {
-        printf("  %-15s %10.3f\n", var_names[var_id], data.vars[var_id]);
+        printf("  %-20s %15.3f\n", var_names[var_id], data.vars[var_id]);
     }
 
     return data;
