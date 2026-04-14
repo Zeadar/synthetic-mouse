@@ -9,6 +9,7 @@
 #include <math.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -53,14 +54,10 @@ int click_action[CLICKABLE_ID_COUNT] = {
     X_FOR_EACH_CLICKABLE(GENERATE_CLICK_ACTION)
 #undef GENERATE_CLICK_ACTION
 };
-struct input_event passthrough_frame[PASSTHROUGH_FRAME_MAX];
-size_t passthrough_frame_len = 0;
-struct input_event passthrough_pending[PASSTHROUGH_FRAME_MAX];
-size_t passthrough_pending_len = 0;
 
 pthread_mutex_t motion_lock;
 pthread_t thread_id;
-volatile sig_atomic_t is_thread_running = 0;
+_Atomic int is_thread_running = 0;
 int is_quiet = 0;
 int is_disabled = 0;
 int is_output_log = 0;
@@ -144,7 +141,7 @@ static void inherit_device_caps(struct libevdev *dst,
 void exit_handler(int sig) {
     if (!is_quiet)
         printf("\nRecieved sig %d, exiting...\n", sig);
-    if (is_thread_running) {
+    if (atomic_load(&is_thread_running)) {
         pthread_mutex_lock(&motion_lock);
         pthread_cancel(thread_id);
         pthread_mutex_unlock(&motion_lock);
@@ -235,7 +232,7 @@ void *mouse_handler() {
         if (memcmp(&motion_state, &(const float[HOLDABLE_ID_COUNT]) {0},
                    sizeof(motion_state)) == 0) {
             if (cycles++ == 100 * 60) {
-                is_thread_running = 0;
+                atomic_store(&is_thread_running, 0);
                 pthread_mutex_unlock(&motion_lock);
                 pthread_exit(0);
             }
@@ -320,6 +317,12 @@ void *mouse_handler() {
     }
 
     return 0;
+}
+
+void wake_thread() {
+    if (!atomic_exchange(&is_thread_running, 1))
+        if (pthread_create(&thread_id, 0, mouse_handler, 0) != 0)
+            atomic_store(&is_thread_running, 0);
 }
 
 int main(int argc, char **argv) {
@@ -415,11 +418,6 @@ int main(int argc, char **argv) {
             continue;
         }
 
-        if (!is_thread_running) {
-            is_thread_running = 1;
-            pthread_create(&thread_id, 0, mouse_handler, 0);
-        }
-
         if (is_input_log)
             log_event(&ev, "input");
 
@@ -476,6 +474,8 @@ int main(int argc, char **argv) {
             pthread_mutex_lock(&motion_lock);
             motion_state[key_id] = strength;
             pthread_mutex_unlock(&motion_lock);
+
+            wake_thread();
 
             if (key->is_pass)
                 goto passthrough;
