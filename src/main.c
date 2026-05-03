@@ -20,7 +20,7 @@
 #define EVENTPATH "/dev/input/by-id/"
 #define F_LOG "%-18sType: %-18sCode: %-18sValue: %d"
 
-#define PASSTHROUGH_FRAME_MAX 32
+#define EVENT_QUEUE_MAX 32
 #define SYNTH_PASSTHROUGH_NAME "Synthetic Passthrough"
 #define SYNTH_MOUSE_NAME "Synthetic Mouse"
 #define HELP                                                                   \
@@ -44,10 +44,16 @@ struct v2 {
     float y;
 };
 
+struct event_buffer {
+    struct input_event ie[EVENT_QUEUE_MAX];
+    int size;
+};
+
 struct conf_data conf_data = {0};
 struct libevdev *current_device;
 struct libevdev_uinput *synthetic_passthrough;
 struct libevdev_uinput *synthetic_mouse;
+struct event_buffer event_buffer;
 float motion_state[HOLDABLE_ID_COUNT];
 int click_action[CLICKABLE_ID_COUNT] = {
 #define GENERATE_CLICK_ACTION(_, __, BUTTON_CODE) BUTTON_CODE,
@@ -63,6 +69,7 @@ int is_quiet = 0;
 int is_disabled = 0;
 int is_output_log = 0;
 int is_force_passthrough = 0;
+int is_pass_log = 0;
 
 struct v2 v2_normalize(const struct v2 v) {
     const float len = sqrtf(v.x * v.x + v.y * v.y);
@@ -81,7 +88,7 @@ struct v2 v2_scale(const struct v2 v, const float s) {
     };
 }
 
-void log_event(struct input_event *ev, const char *setting) {
+void log_event(const struct input_event *ev, const char *setting) {
     printf(F_LOG "\n", setting, libevdev_event_type_get_name(ev->type),
            libevdev_event_code_get_name(ev->type, ev->code), ev->value);
 }
@@ -328,6 +335,130 @@ void wake_thread() {
             atomic_store(&is_thread_running, 0);
 }
 
+void buffer_flush(void) {
+    for (int i = 0; i != event_buffer.size; ++i) {
+        const struct input_event ev = event_buffer.ie[i];
+
+        for (int key_id = 0; key_id != FUNC_ID_COUNT; ++key_id) {
+            struct key *key = &conf_data.func_keys[key_id];
+
+            if (!(ev.code == key->ev_code && ev.type == key->ev_type))
+                continue;
+
+            if (key->press == ev.value) {
+                if (key_id == FUNC_ID_TOGGLE_DISABLE) {
+                    is_force_passthrough = !is_force_passthrough;
+                }
+
+                if (key->is_pass)
+                    goto passthrough;
+                else
+                    goto endpoint;
+            }
+        }
+
+        if (is_force_passthrough) {
+            goto passthrough;
+        }
+
+        if (ev.type == EV_MSC)
+            continue;
+
+        for (int key_id = 0; key_id < HOLDABLE_ID_COUNT; key_id++) {
+            struct key *key = &conf_data.hold_keys[key_id];
+
+            if (!(ev.code == key->ev_code && ev.type == key->ev_type))
+                continue;
+
+            const float val = ev.value;
+            const float pre = key->press;
+            const float rel = key->release;
+
+            float strength = (val - rel) * (1 / (pre - rel));
+
+            if (key->ev_type == EV_KEY) {
+                if (strength > 1 || strength < 0) {
+                    continue;
+                }
+            } else {
+                if (strength > 1 || strength <= 0) {
+                    pthread_mutex_lock(&motion_lock);
+                    motion_state[key_id] = 0;
+                    pthread_mutex_unlock(&motion_lock);
+                    continue;
+                }
+            }
+
+            pthread_mutex_lock(&motion_lock);
+            motion_state[key_id] = strength;
+            pthread_mutex_unlock(&motion_lock);
+
+            wake_thread();
+
+            if (key->is_pass)
+                goto passthrough;
+            else
+                goto endpoint;
+        }
+
+        for (int key_id = 0; key_id < CLICKABLE_ID_COUNT; ++key_id) {
+            struct key *key = &conf_data.click_keys[key_id];
+
+            if (!(ev.code == key->ev_code && ev.type == key->ev_type))
+                continue;
+
+            if (key->ev_code == 0 && key->ev_type == 0)
+                continue;
+
+            const float val = ev.value;
+            const float pre = key->press;
+            const float rel = key->release;
+            float strength = (val - rel) * (1 / (pre - rel));
+
+            if (key->ev_type == EV_KEY && (strength > 1 || strength < 0)) {
+                continue;
+            }
+
+            log_write_event(synthetic_mouse, EV_KEY, click_action[key_id],
+                            ev.value == key->press);
+            libevdev_uinput_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
+
+            if (key->is_pass)
+                goto passthrough;
+            else
+                goto endpoint;
+        }
+
+    passthrough:
+
+        if (!conf_data.enable_passthrough)
+            continue;
+
+        if (is_pass_log)
+            log_event(&ev, "passthrough");
+
+        libevdev_uinput_write_event(synthetic_passthrough, ev.type, ev.code,
+                                    ev.value);
+
+    endpoint:
+        continue; // to make the LSP stfu
+    }
+
+    if (conf_data.enable_passthrough)
+        libevdev_uinput_write_event(synthetic_passthrough, EV_SYN, SYN_REPORT,
+                                    0);
+
+    event_buffer.size = 0;
+}
+
+void buffer_push(const struct input_event ev) {
+    if (event_buffer.size == EVENT_QUEUE_MAX)
+        buffer_flush();
+
+    event_buffer.ie[event_buffer.size] = ev;
+    event_buffer.size++;
+}
+
 int main(int argc, char **argv) {
     struct sigaction sa = {0};
     sa.sa_handler = exit_handler;
@@ -336,7 +467,6 @@ int main(int argc, char **argv) {
     sigaction(SIGINT, &sa, 0);
     sigaction(SIGTERM, &sa, 0);
     int is_input_log = 0;
-    int is_pass_log = 0;
 
     for (int i = 1; i != argc; ++i) {
         if (strcmp(argv[i], "--list-devices") == 0) {
@@ -426,111 +556,10 @@ int main(int argc, char **argv) {
         if (is_input_log)
             log_event(&ev, "input");
 
-        for (int key_id = 0; key_id != FUNC_ID_COUNT; ++key_id) {
-            struct key *key = &conf_data.func_keys[key_id];
-
-            if (!(ev.code == key->ev_code && ev.type == key->ev_type))
-                continue;
-
-            if (key->press == ev.value) {
-                if (key_id == FUNC_ID_TOGGLE_DISABLE) {
-                    is_force_passthrough = !is_force_passthrough;
-                }
-
-                if (key->is_pass)
-                    goto passthrough;
-                else
-                    goto endpoint;
-            }
-        }
-
-        if (is_force_passthrough) {
-            goto passthrough;
-        }
-
-        if (ev.type == EV_SYN || ev.type == EV_MSC)
-            continue;
-
-        for (int key_id = 0; key_id < HOLDABLE_ID_COUNT; key_id++) {
-            struct key *key = &conf_data.hold_keys[key_id];
-
-            if (!(ev.code == key->ev_code && ev.type == key->ev_type))
-                continue;
-
-            const float val = ev.value;
-            const float pre = key->press;
-            const float rel = key->release;
-
-            float strength = (val - rel) * (1 / (pre - rel));
-
-            if (key->ev_type == EV_KEY) {
-                if (strength > 1 || strength < 0) {
-                    continue;
-                }
-            } else {
-                if (strength > 1 || strength <= 0) {
-                    pthread_mutex_lock(&motion_lock);
-                    motion_state[key_id] = 0;
-                    pthread_mutex_unlock(&motion_lock);
-                    continue;
-                }
-            }
-
-            pthread_mutex_lock(&motion_lock);
-            motion_state[key_id] = strength;
-            pthread_mutex_unlock(&motion_lock);
-
-            wake_thread();
-
-            if (key->is_pass)
-                goto passthrough;
-            else
-                goto endpoint;
-        }
-
-        for (int key_id = 0; key_id < CLICKABLE_ID_COUNT; ++key_id) {
-            struct key *key = &conf_data.click_keys[key_id];
-
-            if (!(ev.code == key->ev_code && ev.type == key->ev_type))
-                continue;
-
-            if (key->ev_code == 0 && key->ev_type == 0)
-                continue;
-
-            const float val = ev.value;
-            const float pre = key->press;
-            const float rel = key->release;
-            float strength = (val - rel) * (1 / (pre - rel));
-
-            if (key->ev_type == EV_KEY && (strength > 1 || strength < 0)) {
-                continue;
-            }
-
-            log_write_event(synthetic_mouse, EV_KEY, click_action[key_id],
-                            ev.value == key->press);
-            libevdev_uinput_write_event(synthetic_mouse, EV_SYN, SYN_REPORT, 0);
-
-            if (key->is_pass)
-                goto passthrough;
-            else
-                goto endpoint;
-        }
-
-    passthrough:
-
-        if (!conf_data.enable_passthrough)
-            continue;
-
-        if (is_pass_log)
-            log_event(&ev, "passthrough");
-
-        libevdev_uinput_write_event(synthetic_passthrough, ev.type, ev.code,
-                                    ev.value);
-        libevdev_uinput_write_event(synthetic_passthrough, EV_SYN, SYN_REPORT,
-                                    0);
-
-    endpoint:
-        continue; // to make the LSP stfu
+        if (ev.type == EV_SYN && ev.code == SYN_REPORT)
+            buffer_flush();
+        else
+            buffer_push(ev);
 
     } while (rc == 1 || rc == 0 || rc == -EAGAIN);
 
